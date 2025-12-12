@@ -83,6 +83,44 @@ def process_data(df_c, df_t):
     
     df_c_agg.rename(columns={'CANT ITEM S.C.': 'Solicitado', 'DESCRIPCION DE LA PARTIDA': 'Descripcion'}, inplace=True)
 
-    # 4. Preparar Datos de Transacciones (Pivote)
+   # 4. Preparar Datos de Transacciones (Pivote)
+    # AQUI ESTABA EL ERROR: Asegurate de copiar esto en una sola linea
     if 'TRANSACCION' not in df_t.columns or 'PIEZA' not in df_t.columns:
-         st.error("El archivo de Entradas/Salidas debe tener columnas 'TRANSACCION' y 'PI
+         st.error("El archivo Entradas/Salidas necesita columnas 'TRANSACCION' y 'PIEZA'.")
+         return None
+         
+    df_t_pivot = df_t.pivot_table(
+        index='PIEZA', 
+        columns='TRANSACCION', 
+        values='CANTIDAD', 
+        aggfunc='sum', 
+        fill_value=0
+    ).reset_index()
+    
+    # Asegurar columnas aunque no existan en el archivo
+    if 'RECEPCIONES' not in df_t_pivot.columns: df_t_pivot['RECEPCIONES'] = 0
+    if 'DESPACHOS' not in df_t_pivot.columns: df_t_pivot['DESPACHOS'] = 0
+    
+    df_t_pivot.rename(columns={'RECEPCIONES': 'Recibido_Real', 'DESPACHOS': 'Despachado_Real'}, inplace=True)
+
+    # 5. Cruzar Tablas (Merge)
+    df_merged = pd.merge(df_c_agg, df_t_pivot, left_on='CODIGO DE PIEZA', right_on='PIEZA', how='outer')
+    df_merged.fillna(0, inplace=True)
+    
+    # Crear columna unificada de Material
+    df_merged['Material'] = df_merged.apply(lambda x: x['CODIGO DE PIEZA'] if x['CODIGO DE PIEZA'] != 0 else x['PIEZA'], axis=1)
+    
+    # 6. Cálculos Finales
+    df_merged['Solicitado'] = pd.to_numeric(df_merged['Solicitado'])
+    df_merged['Recibido_Real'] = pd.to_numeric(df_merged['Recibido_Real'])
+    df_merged['Despachado_Real'] = pd.to_numeric(df_merged['Despachado_Real'])
+    
+    # Pendiente = Solicitado - Recibido (No permitimos negativos)
+    df_merged['Pendiente_Recepcion'] = (df_merged['Solicitado'] - df_merged['Recibido_Real']).clip(lower=0)
+    
+    # En Inventario = Recibido - Despachado
+    df_merged['En_Inventario'] = (df_merged['Recibido_Real'] - df_merged['Despachado_Real'])
+
+    # Filtrar basura (filas donde todo es 0)
+    mask = (df_merged['Solicitado'] > 0) | (df_merged['Recibido_Real'] > 0) | (df_merged['Despachado_Real'] > 0)
+    return df_merged[mask].copy()
