@@ -4,11 +4,17 @@ import plotly.express as px
 import os
 import json
 import datetime
+import base64
+from pathlib import Path
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Tablero de Control R-1926", layout="wide", page_icon="⚓")
 
 DB_FILE = "db_materiales.json"
+PDF_DIR = "pdfs_listas_pedido"
+
+# Crear directorio de PDFs si no existe
+os.makedirs(PDF_DIR, exist_ok=True)
 
 # --- PERSISTENCIA ---
 def cargar_datos():
@@ -27,34 +33,53 @@ def guardar_datos(lista_proyectos):
 if "proyectos" not in st.session_state:
     st.session_state.proyectos = cargar_datos()
 
-# --- PROCESAMIENTO DEL EXCEL (mantiene KPIs, sin tabla) ---
+# --- PROCESAMIENTO DEL EXCEL ---
 def procesar_nuevo_excel(df_raw: pd.DataFrame):
-    columnas_necesarias = [
-        "No. S.C.",
-        "CANT ITEM S.C.",
-        "DESCRIPCION DE LA PARTIDA",
-        "No. O.C.",
-        "FECHA DE LLEGADA",
-        "ESTATUS GRN",
-    ]
-    faltan = [c for c in columnas_necesarias if c not in df_raw.columns]
-    if faltan:
-        return {"error": f"Faltan columnas en el archivo: {faltan}"}
+    """
+    Tabla basada en FECHA DE LLEGADA no vacía.
+    Columnas: A, D, F, H, M (índices 0, 3, 5, 7, 12)
+    """
+    # Verificar que el archivo tiene suficientes columnas
+    if df_raw.shape[1] < 13:
+        return {"error": "El archivo no tiene suficientes columnas (mínimo hasta la M)."}
 
-    # Items solicitados: filas con cantidad
-    df_solicitados = df_raw[df_raw["CANT ITEM S.C."].notna()].copy()
-    items_solicitados = int(df_solicitados["CANT ITEM S.C."].count())
+    # 1) Items solicitados (todos con cantidad)
+    df_solicitados = df_raw[df_raw.iloc[:, 3].notna()].copy()  # CANT ITEM S.C. (columna D, índice 3)
+    items_solicitados = int(len(df_solicitados))
 
-    # Items recibidos: ESTATUS GRN == 'RECV'
-    col_grn = df_raw["ESTATUS GRN"].astype(str).str.strip()
-    df_recibidos = df_raw[col_grn == "RECV"].copy()
-    items_recibidos = len(df_recibidos)
+    # 2) Tabla: solo filas con FECHA DE LLEGADA (M) no vacía
+    df_solicitados["Temp_Fecha"] = df_solicitados.iloc[:, 12].astype(str).str.strip()
+    df_tabla = df_solicitados[df_solicitados["Temp_Fecha"] != ""].copy()
+    df_tabla = df_tabla.drop(columns=["Temp_Fecha"])
 
-    # Otros KPIs
-    items_sin_oc = int(df_solicitados["No. O.C."].isna().sum())
+    if df_tabla.empty:
+        return {"error": "No hay filas con FECHA DE LLEGADA."}
+
+    # 3) Items recibidos (con fecha de llegada)
+    items_recibidos = len(df_tabla)
+
+    # 4) Otros KPIs
+    items_sin_oc = int(df_solicitados.iloc[:, 7].isnull().sum())  # No. O.C. (columna H, índice 7)
     avance = (items_recibidos / items_solicitados * 100) if items_solicitados > 0 else 0.0
 
-    # Solo devolvemos KPIs y datos originales (sin tabla_resumen)
+    # 5) Construir tabla_resumen
+    tabla_resumen = []
+    for _, row in df_tabla.iterrows():
+        sc = str(row.iloc[0]) if pd.notnull(row.iloc[0]) else ""
+        cant = str(row.iloc[3]) if pd.notnull(row.iloc[3]) else ""
+        desc = str(row.iloc[5]) if pd.notnull(row.iloc[5]) else ""
+        oc = str(row.iloc[7]) if pd.notnull(row.iloc[7]) else ""
+        fecha = str(row.iloc[12]) if pd.notnull(row.iloc[12]) else ""
+
+        tabla_resumen.append({
+            "No. S.C.": sc,
+            "CANT ITEM": cant,
+            "DESCRIPCION": desc,
+            "No. O.C.": oc,
+            "FECHA LLEGADA": fecha,
+            "LISTA DE PEDIDO": ""
+        })
+
     data_preview = df_solicitados.fillna("").head(500).to_dict(orient="records")
 
     return {
@@ -64,6 +89,7 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
             "items_sin_oc": items_sin_oc,
             "avance": avance,
         },
+        "tabla_resumen": tabla_resumen,
         "data": data_preview,
         "fecha_carga": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
     }
@@ -153,7 +179,7 @@ else:
         with c1:
             st.metric("Items Solicitados", kpis["items_requisitados"])
         with c2:
-            st.metric("Items Recibidos (GRN=RECV)", kpis["items_recibidos"])
+            st.metric("Items con Fecha de Llegada", kpis["items_recibidos"])
         with c3:
             st.metric("Items sin OC", kpis["items_sin_oc"])
         with c4:
@@ -165,7 +191,7 @@ else:
         with col_graf:
             df_graf = pd.DataFrame(
                 {
-                    "Estado": ["Solicitados", "Recibidos", "Sin OC"],
+                    "Estado": ["Solicitados", "Con Fecha", "Sin OC"],
                     "Cantidad": [
                         kpis["items_requisitados"],
                         kpis["items_recibidos"],
@@ -181,7 +207,7 @@ else:
                 text_auto=True,
                 color_discrete_map={
                     "Solicitados": "#3498db",
-                    "Recibidos": "#2ecc71",
+                    "Con Fecha": "#2ecc71",
                     "Sin OC": "#e74c3c",
                 },
                 height=300,
@@ -190,6 +216,90 @@ else:
 
         st.write("---")
 
-        # SOLO EXPANDER CON DATOS ORIGINALES
-        with st.expander("🔍 Ver Datos Originales (Items Solicitados)"):
+        # TABLA DE GESTIÓN DE PEDIDOS
+        st.subheader("📋 Gestión de Pedidos (Solo con Fecha de Llegada)")
+        raw_tabla = datos.get("tabla_resumen", [])
+
+        if raw_tabla:
+            df_tabla = pd.DataFrame(raw_tabla)
+
+            st.success(f"✅ Mostrando {len(df_tabla)} items con FECHA DE LLEGADA.")
+
+            # Editor de tabla
+            column_config = {
+                "No. S.C.": st.column_config.TextColumn("No. S.C.", disabled=True),
+                "CANT ITEM": st.column_config.TextColumn("Cant.", disabled=True),
+                "DESCRIPCION": st.column_config.TextColumn("Descripción", disabled=True),
+                "No. O.C.": st.column_config.TextColumn("O.C.", disabled=True),
+                "FECHA LLEGADA": st.column_config.TextColumn("Fecha Llegada", disabled=True),
+                "LISTA DE PEDIDO": st.column_config.TextColumn(
+                    "📝 Lista de Pedido", disabled=not es_admin, width="medium"
+                ),
+            }
+
+            df_editado = st.data_editor(
+                df_tabla,
+                column_config=column_config,
+                use_container_width=True,
+                hide_index=True,
+                num_rows="fixed",
+                key=f"editor_{proyecto['id']}",
+            )
+
+            # Guardar tabla editada
+            if es_admin:
+                if st.button("💾 Guardar Tabla", type="primary"):
+                    st.session_state.proyectos[indice_proyecto]["contenido"][
+                        "tabla_resumen"
+                    ] = df_editado.to_dict(orient="records")
+                    guardar_datos(st.session_state.proyectos)
+                    st.success("Tabla guardada.")
+                    st.rerun()
+
+            # SECCIÓN ADMIN: SUBIR PDFS POR No. S.C.
+            if es_admin:
+                st.write("---")
+                st.subheader("📁 Gestión de PDFs (Admin)")
+                
+                # Obtener lista única de No. S.C.
+                scs_unicos = df_tabla["No. S.C."].unique().tolist()
+                
+                sc_seleccionado = st.selectbox(
+                    "Selecciona No. S.C. para asignar PDF:",
+                    options=scs_unicos,
+                    key=f"sc_select_{proyecto['id']}"
+                )
+
+                pdf_subido = st.file_uploader(
+                    "Sube un PDF para esta S.C.",
+                    type=["pdf"],
+                    key=f"pdf_upload_{proyecto['id']}"
+                )
+
+                if st.button("📤 Asignar PDF a todas las filas de esta S.C.", type="primary"):
+                    if pdf_subido and sc_seleccionado:
+                        # Guardar PDF con nombre único
+                        pdf_nombre = f"{sc_seleccionado}_{datetime.datetime.now().timestamp()}.pdf"
+                        pdf_path = os.path.join(PDF_DIR, pdf_nombre)
+                        
+                        with open(pdf_path, "wb") as f:
+                            f.write(pdf_subido.getbuffer())
+
+                        # Actualizar tabla: asignar PDF a todas las filas con este No. S.C.
+                        tabla_actualizada = st.session_state.proyectos[indice_proyecto]["contenido"]["tabla_resumen"]
+                        for row in tabla_actualizada:
+                            if row["No. S.C."] == sc_seleccionado:
+                                row["LISTA DE PEDIDO"] = pdf_nombre
+
+                        st.session_state.proyectos[indice_proyecto]["contenido"]["tabla_resumen"] = tabla_actualizada
+                        guardar_datos(st.session_state.proyectos)
+                        st.success(f"PDF asignado a todas las filas con No. S.C. = {sc_seleccionado}")
+                        st.rerun()
+                    else:
+                        st.warning("Selecciona S.C. y sube un PDF.")
+
+        else:
+            st.warning("❌ No hay items con FECHA DE LLEGADA.")
+
+        with st.expander("🔍 Ver Datos Originales (Solicitados)"):
             st.dataframe(pd.DataFrame(datos["data"]))
