@@ -26,71 +26,74 @@ def guardar_datos(lista_proyectos):
         json.dump(lista_proyectos, f, default=str)
 
 # Inicializar estado de sesión
-if 'proyectos' not in st.session_state:
+if "proyectos" not in st.session_state:
     st.session_state.proyectos = cargar_datos()
 
-# --- LÓGICA: TABLA = SOLO ITEMS RECIBIDOS ---
+# --- PROCESAMIENTO EXCEL ---
 def procesar_nuevo_excel(df_raw):
     """
-    1. Items Requisitados = Col A numérica
-    2. Items Recibidos = Col O empieza con 'RE' (de los requisitados)
-    3. TABLA = SOLO Items Recibidos
+    1) Items solicitados: filas donde Col A es numérica.
+    2) Items recibidos: de esos solicitados, Col O empieza con 'RE'.
+    3) Tabla Gestión de Pedidos: SOLO items recibidos.
     """
+    # Verificación mínima de columnas
     if df_raw.shape[1] < 15:
         return {"error": "El archivo no tiene suficientes columnas (mínimo hasta la O)."}
 
-    # PASO 1: Items Requisitados (Col A numérica)
+    # --- FILTRO BASE: ITEMS SOLICITADOS (Col A numérica) ---
     df_raw["Temp_A_Num"] = pd.to_numeric(df_raw.iloc[:, 0], errors="coerce")
-    df_requisitados = df_raw[df_raw["Temp_A_Num"].notna()].copy()
+    df_solicitados = df_raw[df_raw["Temp_A_Num"].notna()].copy()
 
-    if df_requisitados.empty:
+    if df_solicitados.empty:
         return {"error": "No se encontraron filas con SC numérico en la Columna A."}
 
-    # PASO 2: Items Recibidos (Col O empieza con 'RE')
-    columna_O = df_requisitados.iloc[:, 14].astype(str).str.strip()
-    df_recibidos = df_requisitados[columna_O.str.startswith("RE")].copy()
+    # --- KPIs SOBRE SOLICITADOS ---
+    items_solicitados = int(df_solicitados.iloc[:, 5].count())
 
-    # KPIs
-    items_requisitados = int(df_requisitados.iloc[:, 5].count())
+    col_O_solicitados = df_solicitados.iloc[:, 14].astype(str).str.strip()
+
+    # Items recibidos: solicitados con O que empieza por 'RE'
+    df_recibidos = df_solicitados[col_O_solicitados.str.startswith("RE")].copy()
     items_recibidos = int(len(df_recibidos))
-    items_sin_oc = int(df_requisitados.iloc[:, 7].isnull().sum())
-    avance = (items_recibidos / items_requisitados * 100) if items_requisitados > 0 else 0.0
 
-    # TABLA: SOLO items recibidos
+    # Items sin OC sobre solicitados
+    items_sin_oc = int(df_solicitados.iloc[:, 7].isnull().sum())
+
+    avance = (items_recibidos / items_solicitados * 100) if items_solicitados > 0 else 0.0
+
+    # --- TABLA: SOLO ITEMS RECIBIDOS ---
     tabla_resumen = []
     for _, row in df_recibidos.iterrows():
-        sc_val = str(row.iloc[0]) if pd.notnull(row.iloc[0]) else ""
-        cant_val = str(row.iloc[3]) if pd.notnull(row.iloc[3]) else ""
-        item_val = str(row.iloc[5]) if pd.notnull(row.iloc[5]) else ""
-        oc_val = str(row.iloc[7]) if pd.notnull(row.iloc[7]) else ""
+        sc_val    = str(row.iloc[0])  if pd.notnull(row.iloc[0])  else ""
+        cant_val  = str(row.iloc[3])  if pd.notnull(row.iloc[3])  else ""
+        item_val  = str(row.iloc[5])  if pd.notnull(row.iloc[5])  else ""
+        oc_val    = str(row.iloc[7])  if pd.notnull(row.iloc[7])  else ""
         fecha_val = str(row.iloc[12]) if pd.notnull(row.iloc[12]) else ""
-        estado_o = str(row.iloc[14]).strip()
+        estado_o  = str(row.iloc[14]).strip()
 
-        tabla_resumen.append(
-            {
-                "SC": sc_val,
-                "ITEM": item_val,
-                "CANTIDAD": cant_val,
-                "ORDEN DE COMPRA": oc_val,
-                "FECHA DE LLEGADA": fecha_val,
-                "ESTADO": estado_o,
-                "LISTA DE PEDIDO": "",
-            }
-        )
+        tabla_resumen.append({
+            "SC": sc_val,
+            "ITEM": item_val,
+            "CANTIDAD": cant_val,
+            "ORDEN DE COMPRA": oc_val,
+            "FECHA DE LLEGADA": fecha_val,
+            "ESTADO": estado_o,
+            "LISTA DE PEDIDO": ""
+        })
 
-    # Datos originales (todos los requisitados) para el expander
-    data_preview = df_requisitados.fillna("").head(500).to_dict(orient="records")
+    # Datos originales (solicitados) para el expander
+    data_preview = df_solicitados.fillna("").head(500).to_dict(orient="records")
 
     return {
         "kpis": {
-            "items_requisitados": items_requisitados,
+            "items_requisitados": items_solicitados,
             "items_recibidos": items_recibidos,
             "items_sin_oc": items_sin_oc,
-            "avance": avance,
+            "avance": avance
         },
-        "tabla_resumen": tabla_resumen,
-        "data": data_preview,
-        "fecha_carga": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "tabla_resumen": tabla_resumen,   # SOLO RECIBIDOS
+        "data": data_preview,             # SOLICITADOS
+        "fecha_carga": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     }
 
 # --- INTERFAZ GRÁFICA ---
@@ -176,7 +179,7 @@ else:
         # KPIs
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            st.metric("Items Requisitados", kpis["items_requisitados"])
+            st.metric("Items Solicitados", kpis["items_requisitados"])
         with c2:
             st.metric("Items Recibidos", kpis["items_recibidos"])
         with c3:
@@ -190,7 +193,7 @@ else:
         with col_graf:
             df_graf = pd.DataFrame(
                 {
-                    "Estado": ["Requisitados", "Recibidos", "Sin OC"],
+                    "Estado": ["Solicitados", "Recibidos", "Sin OC"],
                     "Cantidad": [
                         kpis["items_requisitados"],
                         kpis["items_recibidos"],
@@ -205,7 +208,7 @@ else:
                 color="Estado",
                 text_auto=True,
                 color_discrete_map={
-                    "Requisitados": "#3498db",
+                    "Solicitados": "#3498db",
                     "Recibidos": "#2ecc71",
                     "Sin OC": "#e74c3c",
                 },
@@ -235,7 +238,7 @@ else:
             }
 
             st.success(
-                f"✅ Mostrando {len(df_tabla)} items RECIBIDOS (coincide con KPI 'Items Recibidos')."
+                f"✅ Mostrando {len(df_tabla)} items RECIBIDOS (mismo conjunto que KPI 'Items Recibidos')."
             )
 
             df_editado = st.data_editor(
@@ -258,5 +261,5 @@ else:
         else:
             st.warning("❌ No hay items recibidos (Col O no tiene 'RE').")
 
-        with st.expander("🔍 Ver Datos Originales (Items Requisitados)"):
+        with st.expander("🔍 Ver Datos Originales (Items Solicitados)"):
             st.dataframe(pd.DataFrame(datos["data"]))
