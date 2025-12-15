@@ -8,10 +8,9 @@ import datetime
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Tablero de Control R-1926", layout="wide", page_icon="⚓")
 
-# Archivo para persistencia de datos
 DB_FILE = "db_materiales.json"
 
-# --- FUNCIONES DE PERSISTENCIA ---
+# --- PERSISTENCIA ---
 def cargar_datos():
     if os.path.exists(DB_FILE):
         try:
@@ -25,63 +24,68 @@ def guardar_datos(lista_proyectos):
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(lista_proyectos, f, default=str)
 
-# Inicializar estado de sesión
 if "proyectos" not in st.session_state:
     st.session_state.proyectos = cargar_datos()
 
-# --- PROCESAMIENTO EXCEL ---
-def procesar_nuevo_excel(df_raw):
+# --- PROCESAMIENTO DEL EXCEL ---
+def procesar_nuevo_excel(df_raw: pd.DataFrame):
     """
-    1) Items solicitados: filas donde Col A es numérica.
-    2) Items recibidos: de esos solicitados, Col O empieza con 'RE'.
+    1) Items solicitados: filas con 'No. S.C.' numérico.
+    2) Items recibidos: ESTATUS GRN == 'RECV'.
     3) Tabla Gestión de Pedidos: SOLO items recibidos.
+    Columnas según tu archivo: [file:3]
+    - No. S.C.
+    - CANT ITEM S.C.
+    - DESCRIPCION DE LA PARTIDA
+    - No. O.C.
+    - FECHA DE LLEGADA
+    - ESTATUS GRN
     """
-    # Verificación mínima de columnas
-    if df_raw.shape[1] < 15:
-        return {"error": "El archivo no tiene suficientes columnas (mínimo hasta la O)."}
+    columnas_necesarias = [
+        "No. S.C.",
+        "CANT ITEM S.C.",
+        "DESCRIPCION DE LA PARTIDA",
+        "No. O.C.",
+        "FECHA DE LLEGADA",
+        "ESTATUS GRN",
+    ]
+    faltan = [c for c in columnas_necesarias if c not in df_raw.columns]
+    if faltan:
+        return {"error": f"Faltan columnas en el archivo: {faltan}"}
 
-    # --- FILTRO BASE: ITEMS SOLICITADOS (Col A numérica) ---
-    df_raw["Temp_A_Num"] = pd.to_numeric(df_raw.iloc[:, 0], errors="coerce")
-    df_solicitados = df_raw[df_raw["Temp_A_Num"].notna()].copy()
+    # 1) Items solicitados: SC numérico
+    df_raw["Temp_SC_Num"] = pd.to_numeric(df_raw["No. S.C."], errors="coerce")
+    df_solicitados = df_raw[df_raw["Temp_SC_Num"].notna()].copy()
 
     if df_solicitados.empty:
-        return {"error": "No se encontraron filas con SC numérico en la Columna A."}
+        return {"error": "No se encontraron filas con 'No. S.C.' numérico."}
 
-    # --- KPIs SOBRE SOLICITADOS ---
-    items_solicitados = int(df_solicitados.iloc[:, 5].count())
+    # KPIs sobre solicitados
+    items_solicitados = int(df_solicitados["CANT ITEM S.C."].count())
+    items_sin_oc = int(df_solicitados["No. O.C."].isna().sum())
 
-    col_O_solicitados = df_solicitados.iloc[:, 14].astype(str).str.strip()
-
-    # Items recibidos: solicitados con O que empieza por 'RE'
-    df_recibidos = df_solicitados[col_O_solicitados.str.startswith("RE")].copy()
-    items_recibidos = int(len(df_recibidos))
-
-    # Items sin OC sobre solicitados
-    items_sin_oc = int(df_solicitados.iloc[:, 7].isnull().sum())
+    # 2) Items recibidos: ESTATUS GRN == 'RECV'
+    col_grn = df_solicitados["ESTATUS GRN"].astype(str).str.strip()
+    df_recibidos = df_solicitados[col_grn == "RECV"].copy()
+    items_recibidos = len(df_recibidos)
 
     avance = (items_recibidos / items_solicitados * 100) if items_solicitados > 0 else 0.0
 
-    # --- TABLA: SOLO ITEMS RECIBIDOS ---
+    # 3) Tabla: SOLO items recibidos
     tabla_resumen = []
     for _, row in df_recibidos.iterrows():
-        sc_val    = str(row.iloc[0])  if pd.notnull(row.iloc[0])  else ""
-        cant_val  = str(row.iloc[3])  if pd.notnull(row.iloc[3])  else ""
-        item_val  = str(row.iloc[5])  if pd.notnull(row.iloc[5])  else ""
-        oc_val    = str(row.iloc[7])  if pd.notnull(row.iloc[7])  else ""
-        fecha_val = str(row.iloc[12]) if pd.notnull(row.iloc[12]) else ""
-        estado_o  = str(row.iloc[14]).strip()
+        tabla_resumen.append(
+            {
+                "SC": str(row["No. S.C."]) if pd.notnull(row["No. S.C."]) else "",
+                "ITEM": str(row["DESCRIPCION DE LA PARTIDA"]) if pd.notnull(row["DESCRIPCION DE LA PARTIDA"]) else "",
+                "CANTIDAD": str(row["CANT ITEM S.C."]) if pd.notnull(row["CANT ITEM S.C."]) else "",
+                "ORDEN DE COMPRA": str(row["No. O.C."]) if pd.notnull(row["No. O.C."]) else "",
+                "FECHA DE LLEGADA": str(row["FECHA DE LLEGADA"]) if pd.notnull(row["FECHA DE LLEGADA"]) else "",
+                "ESTATUS GRN": str(row["ESTATUS GRN"]) if pd.notnull(row["ESTATUS GRN"]) else "",
+                "LISTA DE PEDIDO": "",
+            }
+        )
 
-        tabla_resumen.append({
-            "SC": sc_val,
-            "ITEM": item_val,
-            "CANTIDAD": cant_val,
-            "ORDEN DE COMPRA": oc_val,
-            "FECHA DE LLEGADA": fecha_val,
-            "ESTADO": estado_o,
-            "LISTA DE PEDIDO": ""
-        })
-
-    # Datos originales (solicitados) para el expander
     data_preview = df_solicitados.fillna("").head(500).to_dict(orient="records")
 
     return {
@@ -89,15 +93,14 @@ def procesar_nuevo_excel(df_raw):
             "items_requisitados": items_solicitados,
             "items_recibidos": items_recibidos,
             "items_sin_oc": items_sin_oc,
-            "avance": avance
+            "avance": avance,
         },
-        "tabla_resumen": tabla_resumen,   # SOLO RECIBIDOS
-        "data": data_preview,             # SOLICITADOS
-        "fecha_carga": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        "tabla_resumen": tabla_resumen,
+        "data": data_preview,
+        "fecha_carga": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
     }
 
-# --- INTERFAZ GRÁFICA ---
-
+# --- UI PRINCIPAL ---
 st.markdown(
     """
     <h1 style='text-align: center;'>⚓ Dashboard: R-1926 MONFORTE DE LEMOS</h1>
@@ -109,7 +112,7 @@ st.write("---")
 
 es_admin = False
 
-# --- BARRA LATERAL ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ Panel de Administración")
     password = st.text_input("Clave de Acceso", type="password")
@@ -158,7 +161,7 @@ with st.sidebar:
     else:
         st.info("Introduce la clave '1234'.")
 
-# --- ÁREA PRINCIPAL ---
+# --- CONTENIDO PRINCIPAL ---
 if not st.session_state.proyectos:
     st.info("👋 No hay reportes cargados.")
 else:
@@ -166,7 +169,8 @@ else:
     seleccion = st.selectbox("📂 Selecciona reporte:", opciones)
 
     indice_proyecto = next(
-        (i for i, p in enumerate(st.session_state.proyectos) if p["nombre"] == seleccion), None
+        (i for i, p in enumerate(st.session_state.proyectos) if p["nombre"] == seleccion),
+        None,
     )
     proyecto = st.session_state.proyectos[indice_proyecto]
 
@@ -231,14 +235,14 @@ else:
                 "CANTIDAD": st.column_config.TextColumn("Cant.", disabled=True),
                 "ORDEN DE COMPRA": st.column_config.TextColumn("O.C.", disabled=True),
                 "FECHA DE LLEGADA": st.column_config.TextColumn("Llegada", disabled=True),
-                "ESTADO": st.column_config.TextColumn("Estado O", disabled=True),
+                "ESTATUS GRN": st.column_config.TextColumn("Estatus GRN", disabled=True),
                 "LISTA DE PEDIDO": st.column_config.TextColumn(
                     "📝 Lista de Pedido", disabled=not es_admin, width="medium"
                 ),
             }
 
             st.success(
-                f"✅ Mostrando {len(df_tabla)} items RECIBIDOS (mismo conjunto que KPI 'Items Recibidos')."
+                f"✅ Mostrando {len(df_tabla)} items RECIBIDOS (ESTATUS GRN = 'RECV')."
             )
 
             df_editado = st.data_editor(
@@ -259,7 +263,7 @@ else:
                     st.success("Guardado.")
                     st.rerun()
         else:
-            st.warning("❌ No hay items recibidos (Col O no tiene 'RE').")
+            st.warning("❌ No hay items con ESTATUS GRN = 'RECV'.")
 
         with st.expander("🔍 Ver Datos Originales (Items Solicitados)"):
             st.dataframe(pd.DataFrame(datos["data"]))
