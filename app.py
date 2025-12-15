@@ -1,162 +1,181 @@
 import streamlit as st
 import pandas as pd
-import datetime
+import plotly.express as px
+import plotly.graph_objects as go
+from datetime import datetime
 
-# --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Tablero de Control de Materiales", layout="wide")
+# --- CONFIGURACIÓN DE LA PÁGINA ---
+st.set_page_config(
+    page_title="Tablero de Control Logístico - Naval",
+    page_icon="⚓",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# --- FUNCIÓN: GENERAR DATOS DE EJEMPLO (PREDEFINIDO) ---
-def generar_datos_ejemplo():
-    """
-    Crea un DataFrame falso para que veas la app funcionando de inmediato.
-    """
-    data = {
-        "NO. S.C.": ["SC-1001", "SC-1002", "SC-1003", "SC-1004", "SC-1005", "SC-1006"],
-        "TITULO DE LA REQUISICION": [
-            "TUBERÍA ACERO CARBON", 
-            "VÁLVULAS MARIPOSA", 
-            "BRIDAS 4 PULGADAS", 
-            "SOLDADURA ELECTRODOS", 
-            "PINTURA EPOXICA",
-            "TORNILLERÍA G.5"
-        ],
-        "ESTATUS S.C.": ["APROBADA", "EN FIRMA", "APROBADA", "CANCELADA", "APROBADA", "APROBADA"],
-        "ESTATUS O.C.": ["COLOCADA", "PENDIENTE", "ENTREGADA", "CANCELADA", "COLOCADA", "PARCIAL"],
-        # Fechas simuladas
-        "FECHA PROMETIDA": [
-            datetime.date(2025, 1, 15), # Pasada
-            datetime.date(2025, 2, 20),
-            datetime.date(2025, 1, 10),
-            None,
-            datetime.date(2025, 1, 30), # Pasada
-            datetime.date(2025, 3, 1)
-        ],
-        "FECHA DE LLEGADA": [
-            None, # No ha llegado (Critico si fecha prometida ya pasó)
-            None,
-            datetime.date(2025, 1, 12),
-            None,
-            None,
-            datetime.date(2025, 1, 5) # Llegó parcial
-        ],
-        "CANT DISPONIBLE": [0, 0, 50, 0, 10, 100]
-    }
-    return pd.DataFrame(data)
+# --- ESTILOS CSS PERSONALIZADOS ---
+st.markdown("""
+    <style>
+    .big-font { font-size:20px !important; font-weight: bold; }
+    .metric-card { background-color: #f0f2f6; padding: 15px; border-radius: 10px; border-left: 5px solid #1f77b4; }
+    </style>
+    """, unsafe_allow_html=True)
 
-# --- FUNCIÓN: PROCESAMIENTO DE DATOS ---
-def procesar_reporte(df):
-    """
-    Toma el Excel (o los datos de ejemplo) y calcula los KPIs.
-    """
-    # 1. Limpieza básica de nombres de columnas
-    df.columns = [str(c).strip().upper() for c in df.columns]
-    
-    # 2. KPIs Generales
-    total_partidas = len(df)
-    
-    col_sc = "ESTATUS S.C." if "ESTATUS S.C." in df.columns else df.columns[0]
-    col_oc = "ESTATUS O.C." if "ESTATUS O.C." in df.columns else ""
-    
-    # Conteo para gráficas
-    conteo_sc = df[col_sc].value_counts() if col_sc in df.columns else pd.Series()
-    conteo_oc = df[col_oc].value_counts() if col_oc in df.columns else pd.Series()
-    
-    # 3. Detección de Críticos (Retrasos)
-    df_criticos = pd.DataFrame()
-    
-    if "FECHA PROMETIDA" in df.columns and "FECHA DE LLEGADA" in df.columns:
-        # Asegurar formato fecha
-        df["FECHA PROMETIDA"] = pd.to_datetime(df["FECHA PROMETIDA"], errors='coerce')
-        df["FECHA DE LLEGADA"] = pd.to_datetime(df["FECHA DE LLEGADA"], errors='coerce')
+# --- FUNCIONES DE CARGA Y LIMPIEZA ---
+@st.cache_data
+def load_data(uploaded_file):
+    try:
+        # Intentamos leer buscando el encabezado correcto. 
+        # En tu archivo, los encabezados reales parecen empezar donde está "No. S.C."
+        df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
         
-        hoy = pd.Timestamp.now()
+        # Búsqueda dinámica del encabezado si el archivo tiene filas vacías al inicio
+        if 'No. S.C.' not in df.columns:
+            # Buscar en las primeras 10 filas dónde está el encabezado
+            for i in range(10):
+                df_temp = pd.read_csv(uploaded_file, header=i) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file, header=i)
+                if 'No. S.C.' in df_temp.columns:
+                    df = df_temp
+                    break
         
-        # Lógica: Fecha prometida vencida Y (No ha llegado O llegó después)
-        # Nota: Simplificamos a "No ha llegado" para el ejemplo
-        retrasados = (df["FECHA PROMETIDA"] < hoy) & (df["FECHA DE LLEGADA"].isna())
-        
-        # Filtramos cancelados para que no salgan como críticos
-        no_cancelado = ~df[col_sc].astype(str).str.contains("CANCELADA", na=False)
-        
-        df_criticos = df[retrasados & no_cancelado].copy()
-        
-        # Seleccionar solo columnas útiles para mostrar
-        cols_mostrar = ["NO. S.C.", "TITULO DE LA REQUISICION", "FECHA PROMETIDA", col_oc]
-        # Intersección para evitar error si falta alguna columna
-        cols_finales = [c for c in cols_mostrar if c in df_criticos.columns]
-        df_criticos = df_criticos[cols_finales]
+        # Limpieza de fechas
+        date_cols = ['FECHA PROMETIDA', 'FECHA DE LLEGADA', 'FECHA REP MCC']
+        for col in date_cols:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors='coerce')
 
-    return total_partidas, conteo_sc, conteo_oc, df_criticos, df
+        return df
+    except Exception as e:
+        st.error(f"Error al procesar el archivo: {e}")
+        return None
 
-# --- INTERFAZ DE USUARIO (STREAMLIT) ---
-
-st.title("📊 Tablero de Control de Materiales")
-st.markdown("Este ejemplo carga datos **automáticamente** para evitar errores. Puedes subir tu archivo en la barra lateral.")
-
-# --- BARRA LATERAL: CONTROL DE DATOS ---
+# --- SIDEBAR: ADMINISTRADOR ---
 with st.sidebar:
-    st.header("Origen de Datos")
-    opcion_datos = st.radio("Selecciona fuente:", ["Usar Ejemplo Demo", "Subir Excel Propio"])
+    st.image("https://img.icons8.com/ios-filled/100/1f77b4/cargo-ship.png", width=50)
+    st.title("Admin Panel")
     
-    df_trabajo = None
+    # Simulación de Login Simple
+    password = st.text_input("Contraseña de Admin", type="password")
     
-    if opcion_datos == "Usar Ejemplo Demo":
-        df_trabajo = generar_datos_ejemplo()
-        st.info("Visualizando datos ficticios del sistema.")
+    uploaded_file = None
+    if password == "admin123":  # Contraseña ejemplo
+        st.success("Acceso Concedido")
+        st.markdown("---")
+        st.subheader("📂 Cargar Control de Materiales")
+        uploaded_file = st.file_uploader("Sube tu Excel o CSV aquí", type=['xlsx', 'csv'])
+    elif password:
+        st.error("Contraseña incorrecta")
     else:
-        uploaded_file = st.file_uploader("Cargar Control de Materiales", type=["xlsx", "xls"])
-        if uploaded_file:
-            try:
-                df_trabajo = pd.read_excel(uploaded_file)
-                st.success("Archivo cargado correctamente.")
-            except Exception as e:
-                st.error(f"Error leyendo archivo: {e}")
+        st.info("Ingresa la contraseña para cargar datos.")
 
-# --- DASHBOARD PRINCIPAL ---
-if df_trabajo is not None:
-    # Procesar los datos
-    total, data_sc, data_oc, df_criticos, df_limpio = procesar_reporte(df_trabajo)
-    
     st.markdown("---")
-    
-    # 1. METRICAS (KPIs)
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total de Partidas", total)
-    col2.metric("Partidas con Retraso", len(df_criticos), delta_color="inverse")
-    
-    # Calcular % de avance (si hay estatus OC 'ENTREGADA' o 'RECIBIDA')
-    if not data_oc.empty:
-        entregadas = data_oc.get("ENTREGADA", 0) + data_oc.get("RECIBIDA", 0) + data_oc.get("CERRADA", 0)
-        avance = (entregadas / total) * 100 if total > 0 else 0
-        col3.metric("% Avance Recepción", f"{avance:.1f}%")
-    else:
-        col3.metric("% Avance", "N/A")
+    st.caption("Sistema de Gestión de Astillero v2.0")
 
-    # 2. GRAFICAS
-    c_chart1, c_chart2 = st.columns(2)
+# --- ÁREA PRINCIPAL ---
+
+if uploaded_file is not None:
+    df = load_data(uploaded_file)
     
-    with c_chart1:
-        st.subheader("Estatus Requisiciones (S.C.)")
-        st.bar_chart(data_sc)
+    if df is not None:
+        # --- PROCESAMIENTO DE KPIS ---
+        # Filtros básicos derivados de tu archivo
+        total_items = len(df)
+        recibidos = df[df['ESTATUS GRN'] == 'RECV'].shape[0]
+        cancelados = df[df['ESTATUS O.C.'] == 'CANCELADA'].shape[0] # Ajustado según tu data
+        pendientes = total_items - recibidos - cancelados
+        pct_avance = (recibidos / (total_items - cancelados)) * 100 if (total_items - cancelados) > 0 else 0
         
-    with c_chart2:
-        st.subheader("Estatus Órdenes (O.C.)")
-        st.bar_chart(data_oc)
+        # Cálculo de Tiempos (Días de Retraso)
+        if 'FECHA PROMETIDA' in df.columns and 'FECHA DE LLEGADA' in df.columns:
+            df['Dias_Retraso'] = (df['FECHA DE LLEGADA'] - df['FECHA PROMETIDA']).dt.days
+            # Consideramos "A tiempo" si llegó antes o el mismo día (<= 0)
+            a_tiempo = df[df['Dias_Retraso'] <= 0].shape[0]
+            con_retraso = df[df['Dias_Retraso'] > 0].shape[0]
+            # Solo consideramos items que ya llegaron para el KPI de eficiencia
+            items_con_fecha = df.dropna(subset=['FECHA DE LLEGADA'])
+            otd_rate = (a_tiempo / len(items_con_fecha)) * 100 if len(items_con_fecha) > 0 else 0
+        
+        st.title(f"⚓ Dashboard Ejecutivo: {df['NOMBRE DEL PROYECTO'].iloc[0] if 'NOMBRE DEL PROYECTO' in df.columns else 'Control de Materiales'}")
+        st.markdown("Vista de alto nivel del estatus de la cadena de suministro.")
 
-    # 3. TABLAS DETALLADAS
-    st.markdown("---")
-    tab1, tab2 = st.tabs(["🚨 Materiales Críticos (Retrasados)", "📋 Base de Datos Completa"])
-    
-    with tab1:
-        if not df_criticos.empty:
-            st.error("Los siguientes materiales tienen Fecha Prometida vencida y no han registrado llegada:")
-            st.dataframe(df_criticos, use_container_width=True)
-        else:
-            st.success("¡Excelente! No hay materiales con retraso crítico.")
+        # --- FILA 1: METRICAS CLAVE (KPIs) ---
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric(label="Total Solicitudes (Items)", value=total_items)
+        with col2:
+            st.metric(label="Material Recibido", value=recibidos, delta=f"{pct_avance:.1f}% Completado")
+        with col3:
+            st.metric(label="Eficiencia Entrega (OTD)", value=f"{otd_rate:.1f}%", delta_color="inverse" if otd_rate < 80 else "normal")
+        with col4:
+            st.metric(label="Pendientes Críticos", value=pendientes, delta_color="off")
+
+        st.markdown("---")
+
+        # --- TABS PARA VISTAS DETALLADAS ---
+        tab1, tab2, tab3 = st.tabs(["📊 Análisis Gráfico", "⏱️ Tiempos de Entrega", "📋 Base de Datos"])
+
+        with tab1:
+            c1, c2 = st.columns(2)
             
-    with tab2:
-        st.write("Visualización completa de los datos cargados:")
-        st.dataframe(df_limpio, use_container_width=True)
+            with c1:
+                st.subheader("Estatus de Materiales")
+                # Gráfico de Dona para Estatus
+                status_counts = df['ESTATUS GRN'].fillna('PENDIENTE').value_counts().reset_index()
+                status_counts.columns = ['Estatus', 'Cantidad']
+                fig_pie = px.pie(status_counts, values='Cantidad', names='Estatus', hole=0.4, 
+                                 color_discrete_sequence=px.colors.sequential.RdBu)
+                st.plotly_chart(fig_pie, use_container_width=True)
+
+            with c2:
+                st.subheader("Top Materiales Solicitados")
+                # Extraemos palabras clave o usamos la descripción
+                if 'DESCRIPCION DE LA PARTIDA' in df.columns:
+                    # Contamos frecuencia de descripciones
+                    top_mats = df['DESCRIPCION DE LA PARTIDA'].value_counts().head(10).sort_values(ascending=True)
+                    fig_bar = px.bar(top_mats, orientation='h', title="Top 10 Items más frecuentes")
+                    fig_bar.update_layout(xaxis_title="Cantidad", yaxis_title="Material")
+                    st.plotly_chart(fig_bar, use_container_width=True)
+
+        with tab2:
+            st.subheader("Análisis de Cumplimiento de Fechas")
+            
+            if 'FECHA PROMETIDA' in df.columns and 'FECHA DE LLEGADA' in df.columns:
+                # Scatter plot comparativo
+                df_dates = df.dropna(subset=['FECHA PROMETIDA', 'FECHA DE LLEGADA']).copy()
+                fig_scatter = px.scatter(df_dates, x='FECHA PROMETIDA', y='FECHA DE LLEGADA', 
+                                         color='Dias_Retraso',
+                                         hover_data=['DESCRIPCION DE LA PARTIDA', 'No. S.C.'],
+                                         title="Fecha Prometida vs. Fecha Real de Llegada",
+                                         labels={'Dias_Retraso': 'Días de Retraso'},
+                                         color_continuous_scale='RdYlGn_r') # Verde bueno, Rojo retraso
+                
+                # Línea de referencia (lo ideal es x=y)
+                fig_scatter.add_shape(type="line",
+                    x0=df_dates['FECHA PROMETIDA'].min(), y0=df_dates['FECHA PROMETIDA'].min(),
+                    x1=df_dates['FECHA PROMETIDA'].max(), y1=df_dates['FECHA PROMETIDA'].max(),
+                    line=dict(color="Gray", width=2, dash="dash"),
+                )
+                st.plotly_chart(fig_scatter, use_container_width=True)
+                
+                st.info("💡 Nota: Los puntos por encima de la línea punteada representan entregas tardías. El color indica la gravedad del retraso.")
+
+        with tab3:
+            st.subheader("Detalle de Registros")
+            # Filtros interactivos simples
+            search = st.text_input("🔍 Buscar por descripción o código de pieza:")
+            
+            df_display = df.copy()
+            if search:
+                df_display = df_display[df_display.apply(lambda row: row.astype(str).str.contains(search, case=False).any(), axis=1)]
+            
+            st.dataframe(df_display, use_container_width=True)
 
 else:
-    st.warning("Esperando datos... Selecciona 'Usar Ejemplo Demo' o sube un archivo.")
+    # Pantalla de bienvenida cuando no hay archivo
+    st.markdown("""
+    <div style='text-align: center; padding: 50px;'>
+        <h1>Bienvenido al Sistema de Control Logístico</h1>
+        <p>Por favor, ingrese como administrador en el menú lateral para cargar el archivo de control de materiales.</p>
+        <p style='color: gray;'>Esperando carga de datos...</p>
+    </div>
+    """, unsafe_allow_html=True)
