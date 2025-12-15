@@ -29,42 +29,41 @@ def guardar_datos(lista_proyectos):
 if 'proyectos' not in st.session_state:
     st.session_state.proyectos = cargar_datos()
 
-# --- LÓGICA DE PROCESAMIENTO CORREGIDA ---
+# --- LÓGICA DE PROCESAMIENTO (FILTROS ESTRICTOS) ---
 def procesar_nuevo_excel(df_raw):
     """
     1. Filtra filas donde Col A es numérica.
-    2. Filtra filas donde Col M es estrictamente una FECHA válida.
+    2. Filtra filas donde Col M es ESTRICTAMENTE una fecha válida.
     """
     # Verificación mínima de columnas
     if df_raw.shape[1] < 15:
         return {"error": "El archivo no tiene suficientes columnas (mínimo hasta la O)."}
 
-    # --- 0. FILTRADO DE DATOS (REFORZADO) ---
+    # --- FILTRADO NIVEL 1: COLUMNA A (Debe ser Número) ---
+    # Convertimos Col A (índice 0) a numérico. Errores = NaN
+    df_raw['Temp_A_Num'] = pd.to_numeric(df_raw.iloc[:, 0], errors='coerce')
     
-    # 1. Filtro Columna A (SC) -> Debe ser numérico
-    # Convertimos a numérico, los errores se vuelven NaN
-    df_raw['Filtro_A'] = pd.to_numeric(df_raw.iloc[:, 0], errors='coerce')
-    # Nos quedamos solo con los que NO son NaN en A
-    df = df_raw[df_raw['Filtro_A'].notna()].copy()
+    # Eliminamos filas donde A no sea número
+    df = df_raw[df_raw['Temp_A_Num'].notna()].copy()
     
     if df.empty:
-        return {"error": "No se encontraron filas con número de SC válido en la Columna A."}
+        return {"error": "No se encontraron filas con SC numérico en la Columna A."}
 
-    # 2. Filtro Columna M (Fecha Llegada) -> Debe ser una Fecha válida
-    # Usamos pd.to_datetime con errors='coerce'. 
-    # Esto convertirá textos, espacios o vacíos en NaT (Not a Time).
-    df['Filtro_M_Fecha'] = pd.to_datetime(df.iloc[:, 12], errors='coerce', dayfirst=True)
+    # --- FILTRADO NIVEL 2: COLUMNA M (Debe ser Fecha) ---
+    # Convertimos Col M (índice 12) a fecha. 
+    # 'errors=coerce' convierte textos, espacios y vacíos en NaT (Not a Time)
+    df['Temp_M_Fecha'] = pd.to_datetime(df.iloc[:, 12], errors='coerce', dayfirst=True)
     
-    # Nos quedamos solo con las filas donde la fecha es válida (No es NaT)
-    df = df[df['Filtro_M_Fecha'].notna()].copy()
-    
-    # Limpiamos columnas auxiliares
-    df = df.drop(columns=['Filtro_A', 'Filtro_M_Fecha'])
+    # Eliminamos filas donde la fecha no sea válida (NaT)
+    df = df[df['Temp_M_Fecha'].notna()].copy()
+
+    # Limpieza de columnas temporales
+    df = df.drop(columns=['Temp_A_Num', 'Temp_M_Fecha'])
 
     if df.empty:
-         return {"error": "Se encontraron SC numéricos, pero NINGUNO tiene fecha válida en la Columna M."}
+         return {"error": "Se encontraron SC válidos, pero NINGUNO tiene fecha válida en Columna M."}
 
-    # --- 1. CÁLCULO DE KPIs ---
+    # --- CÁLCULO DE KPIs ---
     # Items Requisitados (Columna F = índice 5)
     items_requisitados = int(df.iloc[:, 5].count())
     
@@ -81,16 +80,16 @@ def procesar_nuevo_excel(df_raw):
     else:
         avance = 0.0
 
-    # --- 2. GENERACIÓN DE LA TABLA "LISTA DE PEDIDO" ---
+    # --- GENERACIÓN DE LA TABLA RESUMEN ---
     tabla_resumen = []
     
     for index, row in df.iterrows():
-        # Extracción segura
-        sc_val = str(row.iloc[0]) if pd.notnull(row.iloc[0]) else ""       
-        cant_val = str(row.iloc[3]) if pd.notnull(row.iloc[3]) else ""     
-        item_val = str(row.iloc[5]) if pd.notnull(row.iloc[5]) else ""     
-        oc_val = str(row.iloc[7]) if pd.notnull(row.iloc[7]) else ""       
-        fecha_val = str(row.iloc[12]) if pd.notnull(row.iloc[12]) else ""  
+        # Extracción segura de datos
+        sc_val = str(row.iloc[0]) if pd.notnull(row.iloc[0]) else ""       # A
+        cant_val = str(row.iloc[3]) if pd.notnull(row.iloc[3]) else ""     # D
+        item_val = str(row.iloc[5]) if pd.notnull(row.iloc[5]) else ""     # F
+        oc_val = str(row.iloc[7]) if pd.notnull(row.iloc[7]) else ""       # H
+        fecha_val = str(row.iloc[12]) if pd.notnull(row.iloc[12]) else ""  # M
         
         tabla_resumen.append({
             "SC": sc_val,
@@ -98,10 +97,10 @@ def procesar_nuevo_excel(df_raw):
             "CANTIDAD": cant_val,
             "ORDEN DE COMPRA": oc_val,
             "FECHA DE LLEGADA": fecha_val,
-            "LISTA DE PEDIDO": "" 
+            "LISTA DE PEDIDO": ""  # Campo editable vacío
         })
 
-    # Datos completos para vista previa
+    # Datos para vista previa (primeras 500 filas)
     data_preview = df.fillna("").head(500).to_dict(orient='records')
 
     return {
@@ -138,12 +137,12 @@ with st.sidebar:
         
         st.subheader("📤 Subir Nuevo Proyecto")
         nombre_proyecto = st.text_input("Nombre del Reporte (Ej. Semana 4)")
-        archivo_subido = st.file_uploader("Archivo Excel", type=["xlsx", "xls", "csv"])
+        archivo_subido = st.file_uploader("Archivo Excel/CSV", type=["xlsx", "xls", "csv"])
         
         if st.button("Procesar y Guardar"):
             if nombre_proyecto and archivo_subido:
                 try:
-                    # header=5 implica que la fila 6 tiene los títulos y la 7 los datos
+                    # LEER EXCEL: header=5 (Fila 6 tiene títulos, datos empiezan en 7)
                     if archivo_subido.name.endswith('.csv'):
                         df = pd.read_csv(archivo_subido, header=5)
                     else:
@@ -161,30 +160,28 @@ with st.sidebar:
                         }
                         st.session_state.proyectos.append(nuevo_registro)
                         guardar_datos(st.session_state.proyectos)
-                        st.success(f"Reporte guardado. (Filtro estricto: SC Numérico + Fecha Válida)")
+                        st.success(f"Reporte '{nombre_proyecto}' guardado con éxito.")
                         st.rerun()
                 except Exception as e:
-                    st.error(f"Error crítico al leer el archivo: {e}")
+                    st.error(f"Error crítico: {e}")
             else:
                 st.warning("Falta nombre o archivo.")
 
         st.markdown("---")
-        st.subheader("🗑️ Limpieza")
-        if st.button("Borrar TODOS los reportes"):
+        if st.button("🗑️ Borrar Todo"):
             st.session_state.proyectos = []
             guardar_datos([])
             st.rerun()
-            st.success("Base de datos limpia.")
     else:
-        st.info("Introduce la clave '1234' para gestionar archivos.")
+        st.info("Introduce la clave '1234'.")
 
 # --- ÁREA PRINCIPAL ---
 
 if not st.session_state.proyectos:
-    st.info("👋 No hay reportes cargados. Ve al panel admin y sube el Excel.")
+    st.info("👋 No hay reportes cargados.")
 else:
     opciones = [p["nombre"] for p in st.session_state.proyectos]
-    seleccion = st.selectbox("📂 Selecciona el reporte a visualizar:", opciones)
+    seleccion = st.selectbox("📂 Selecciona reporte:", opciones)
     
     indice_proyecto = next((i for i, p in enumerate(st.session_state.proyectos) if p["nombre"] == seleccion), None)
     proyecto = st.session_state.proyectos[indice_proyecto]
@@ -195,36 +192,34 @@ else:
         
         st.markdown(f"### Reporte: {proyecto['nombre']} (Cargado: {datos['fecha_carga']})")
         
-        # 1. KPI CARDS
+        # KPIS
         c1, c2, c3, c4 = st.columns(4)
-        with c1: st.metric("Items en Lista", kpis["items_requisitados"], help="Filtrados por Fecha Válida")
+        with c1: st.metric("Items en Lista", kpis["items_requisitados"], help="Filtrados por Fecha")
         with c2: st.metric("Items Recibidos", kpis["items_recibidos"])
         with c3: st.metric("Items sin OC", kpis["items_sin_oc"])
-        with c4: st.metric("Porcentaje de Avance", f"{kpis['avance']:.1f}%")
-            
+        with c4: st.metric("Avance", f"{kpis['avance']:.1f}%")
         st.write("---")
         
-        # 2. GRÁFICAS
+        # GRÁFICA
         col_graf, _ = st.columns([1, 0.1])
         with col_graf:
             df_graf = pd.DataFrame({
-                'Estado': ['Total en Lista', 'Recibidos', 'Sin OC'],
+                'Estado': ['Total', 'Recibidos', 'Sin OC'],
                 'Cantidad': [kpis["items_requisitados"], kpis["items_recibidos"], kpis["items_sin_oc"]]
             })
             fig = px.bar(df_graf, x='Estado', y='Cantidad', color='Estado', text_auto=True,
-                         color_discrete_map={'Total en Lista': '#3498db', 'Recibidos': '#2ecc71', 'Sin OC': '#e74c3c'}, height=300)
+                         color_discrete_map={'Total': '#3498db', 'Recibidos': '#2ecc71', 'Sin OC': '#e74c3c'}, height=300)
             st.plotly_chart(fig, use_container_width=True)
 
         st.write("---")
         
-        # 3. TABLA
-        st.subheader("📋 Gestión de Pedidos (Filtrado por Fecha)")
-        
+        # TABLA
+        st.subheader("📋 Gestión de Pedidos")
         raw_tabla = datos.get("tabla_resumen", [])
         
         if raw_tabla:
             df_tabla = pd.DataFrame(raw_tabla)
-
+            
             column_config = {
                 "SC": st.column_config.TextColumn("SC", disabled=True),
                 "ITEM": st.column_config.TextColumn("Item", disabled=True),
@@ -232,14 +227,14 @@ else:
                 "ORDEN DE COMPRA": st.column_config.TextColumn("O.C.", disabled=True),
                 "FECHA DE LLEGADA": st.column_config.TextColumn("Llegada", disabled=True),
                 "LISTA DE PEDIDO": st.column_config.TextColumn(
-                    "📝 Lista de Pedido (Notas)", 
+                    "📝 Lista de Pedido", 
                     disabled=not es_admin,
                     width="medium"
                 )
             }
-
-            st.info(f"Mostrando {len(df_tabla)} items que tienen fecha válida de llegada.")
-
+            
+            st.info(f"Mostrando {len(df_tabla)} items válidos.")
+            
             df_editado = st.data_editor(
                 df_tabla,
                 column_config=column_config,
@@ -248,20 +243,15 @@ else:
                 num_rows="fixed",
                 key=f"editor_{proyecto['id']}"
             )
-
+            
             if es_admin:
-                col_save, _ = st.columns([1, 4])
-                with col_save:
-                    if st.button("💾 Guardar Notas", type="primary"):
-                        st.session_state.proyectos[indice_proyecto]["contenido"]["tabla_resumen"] = df_editado.to_dict(orient="records")
-                        guardar_datos(st.session_state.proyectos)
-                        st.success("¡Guardado!")
-                        st.rerun()
+                if st.button("💾 Guardar Notas", type="primary"):
+                    st.session_state.proyectos[indice_proyecto]["contenido"]["tabla_resumen"] = df_editado.to_dict(orient="records")
+                    guardar_datos(st.session_state.proyectos)
+                    st.success("Guardado.")
+                    st.rerun()
         else:
-            st.warning("⚠️ No hay datos para mostrar con los filtros actuales.")
-
-        st.write("---")
+            st.warning("No hay datos para mostrar.")
 
         with st.expander("🔍 Ver Datos Originales"):
-            df_visual = pd.DataFrame(datos["data"])
-            st.dataframe(df_visual)
+            st.dataframe(pd.DataFrame(datos["data"]))
