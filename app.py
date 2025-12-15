@@ -32,15 +32,15 @@ if 'proyectos' not in st.session_state:
 # --- LÓGICA DE PROCESAMIENTO ---
 def procesar_nuevo_excel(df):
     """
-    Calcula KPIs y genera la Tabla Resumen con las columnas específicas:
-    A (SC), F (Item), D (Cantidad), H (OC), M (Llegada).
+    Calcula KPIs y genera la Tabla Resumen con las columnas específicas.
     """
-    # Verificación mínima de columnas (necesitamos hasta la O que es la 14)
+    # Verificación mínima de columnas
     if df.shape[1] < 15:
         return {"error": "El archivo no tiene suficientes columnas (mínimo hasta la O)."}
 
-    # --- 1. CÁLCULO DE KPIs (Lógica anterior) ---
+    # --- 1. CÁLCULO DE KPIs ---
     # Items Requisitados (Columna F = índice 5)
+    # Al leer desde la fila 7, el encabezado ya no estorba, así que contamos todo lo que no sea nulo.
     items_requisitados = int(df.iloc[:, 5].count())
     
     # Items Recibidos (Columna O = índice 14, empieza con 'RE')
@@ -57,20 +57,17 @@ def procesar_nuevo_excel(df):
         avance = 0.0
 
     # --- 2. GENERACIÓN DE LA TABLA "LISTA DE PEDIDO" ---
-    # Extraemos solo las columnas solicitadas por índice:
-    # A=0 (SC), D=3 (Cantidad), F=5 (Item), H=7 (Orden Compra), M=12 (Fecha Llegada)
-    
     tabla_resumen = []
     
     for index, row in df.iterrows():
-        # Extracción segura de datos (convirtiendo a string para evitar errores)
+        # Extracción segura de datos
         sc_val = str(row.iloc[0]) if pd.notnull(row.iloc[0]) else ""       # Columna A
         cant_val = str(row.iloc[3]) if pd.notnull(row.iloc[3]) else ""     # Columna D
         item_val = str(row.iloc[5]) if pd.notnull(row.iloc[5]) else ""     # Columna F
         oc_val = str(row.iloc[7]) if pd.notnull(row.iloc[7]) else ""       # Columna H
         fecha_val = str(row.iloc[12]) if pd.notnull(row.iloc[12]) else ""  # Columna M
         
-        # Filtramos filas totalmente vacías para que no se llene de basura
+        # Filtro simple para evitar filas vacías que a veces quedan al final del Excel
         if sc_val == "" and item_val == "":
             continue
 
@@ -80,10 +77,10 @@ def procesar_nuevo_excel(df):
             "CANTIDAD": cant_val,
             "ORDEN DE COMPRA": oc_val,
             "FECHA DE LLEGADA": fecha_val,
-            "LISTA DE PEDIDO": ""  # Campo nuevo editable (inicia vacío)
+            "LISTA DE PEDIDO": ""  # Campo editable
         })
 
-    # Datos completos para la vista previa inferior (primeras 500 filas)
+    # Datos completos para vista previa (primeras 500 filas)
     data_preview = df.fillna("").head(500).to_dict(orient='records')
 
     return {
@@ -93,7 +90,7 @@ def procesar_nuevo_excel(df):
             "items_sin_oc": items_sin_oc,
             "avance": avance
         },
-        "tabla_resumen": tabla_resumen, # Aquí va la nueva tabla filtrada
+        "tabla_resumen": tabla_resumen,
         "data": data_preview,
         "fecha_carga": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     }
@@ -106,7 +103,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 st.write("---")
 
-# Variable para controlar si el usuario es admin en esta sesión
+# Estado de admin
 es_admin = False
 
 # --- BARRA LATERAL (ADMINISTRACIÓN) ---
@@ -116,7 +113,7 @@ with st.sidebar:
     password = st.text_input("Clave de Acceso", type="password")
     
     if password == "1234":
-        es_admin = True # ¡Contraseña correcta!
+        es_admin = True
         st.success("🔓 Modo Editor Activo")
         st.markdown("---")
         
@@ -127,7 +124,11 @@ with st.sidebar:
         if st.button("Procesar y Guardar"):
             if nombre_proyecto and archivo_subido:
                 try:
-                    df = pd.read_excel(archivo_subido, header=0)
+                    # AQUÍ ESTÁ EL CAMBIO IMPORTANTE:
+                    # header=6 significa que la fila 7 del Excel (índice 6) contiene los títulos
+                    # y los datos empiezan en la fila 8.
+                    df = pd.read_excel(archivo_subido, header=6)
+                    
                     resultado = procesar_nuevo_excel(df)
                     
                     if "error" in resultado:
@@ -141,10 +142,10 @@ with st.sidebar:
                         
                         st.session_state.proyectos.append(nuevo_registro)
                         guardar_datos(st.session_state.proyectos)
-                        st.success(f"Reporte '{nombre_proyecto}' guardado correctamente.")
+                        st.success(f"Reporte '{nombre_proyecto}' guardado correctamente (Iniciando en fila 7).")
                         st.rerun()
                 except Exception as e:
-                    st.error(f"Error crítico: {e}")
+                    st.error(f"Error crítico al leer el archivo: {e}")
             else:
                 st.warning("Debes poner un nombre y subir un archivo.")
 
@@ -154,21 +155,20 @@ with st.sidebar:
             st.session_state.proyectos = []
             guardar_datos([])
             st.rerun()
-            st.success("Base de datos limpia. Sube los archivos de nuevo.")
+            st.success("Base de datos limpia.")
             
     else:
-        st.info("Introduce la clave '1234' para gestionar archivos y editar pedidos.")
+        st.info("Introduce la clave '1234' para gestionar archivos.")
 
-# --- ÁREA PRINCIPAL (VISUALIZACIÓN) ---
+# --- ÁREA PRINCIPAL ---
 
 if not st.session_state.proyectos:
-    st.info("👋 No hay reportes cargados. Por favor, ingresa como admin (izquierda) y sube el archivo Excel para ver la nueva tabla.")
+    st.info("👋 No hay reportes cargados. Ve al panel admin y sube el Excel (recuerda que leerá desde la fila 7).")
 else:
     # Selector de proyecto
     opciones = [p["nombre"] for p in st.session_state.proyectos]
     seleccion = st.selectbox("📂 Selecciona el reporte a visualizar:", opciones)
     
-    # Buscamos el índice para poder guardar cambios si se edita
     indice_proyecto = next((i for i, p in enumerate(st.session_state.proyectos) if p["nombre"] == seleccion), None)
     proyecto = st.session_state.proyectos[indice_proyecto]
     
@@ -187,7 +187,7 @@ else:
             
         st.write("---")
         
-        # 2. GRÁFICAS KPI
+        # 2. GRÁFICAS
         col_graf, _ = st.columns([1, 0.1])
         with col_graf:
             df_graf = pd.DataFrame({
@@ -200,63 +200,53 @@ else:
 
         st.write("---")
         
-        # --- 3. NUEVA SECCIÓN: TABLA DE LISTA DE PEDIDO ---
+        # 3. TABLA DE LISTA DE PEDIDO
         st.subheader("📋 Gestión de Pedidos y Detalles")
         
-        # Obtenemos la tabla generada en el procesamiento
         raw_tabla = datos.get("tabla_resumen", [])
         
         if raw_tabla:
             df_tabla = pd.DataFrame(raw_tabla)
 
-            # CONFIGURACIÓN DE COLUMNAS (Qué se puede editar y qué no)
             column_config = {
                 "SC": st.column_config.TextColumn("SC (Col A)", disabled=True),
                 "ITEM": st.column_config.TextColumn("Item (Col F)", disabled=True),
                 "CANTIDAD": st.column_config.TextColumn("Cant. (Col D)", disabled=True),
                 "ORDEN DE COMPRA": st.column_config.TextColumn("O.C. (Col H)", disabled=True),
                 "FECHA DE LLEGADA": st.column_config.TextColumn("Llegada (Col M)", disabled=True),
-                # ESTA ES LA ÚNICA EDITABLE:
                 "LISTA DE PEDIDO": st.column_config.TextColumn(
                     "📝 Lista de Pedido (Notas)", 
-                    disabled=not es_admin,  # Bloqueado si no pusiste la clave 1234
+                    disabled=not es_admin,
                     width="medium",
                     help="Escribe aquí notas. Solo se guardan si eres Admin."
                 )
             }
 
-            st.info(f"Mostrando {len(df_tabla)} items. " + 
-                    ("✅ Eres Admin: Puedes editar 'Lista de Pedido'." if es_admin else "🔒 Modo Lectura: Ingresa clave para editar."))
+            st.info(f"Mostrando {len(df_tabla)} items importados.")
 
-            # EDITOR DE DATOS
             df_editado = st.data_editor(
                 df_tabla,
                 column_config=column_config,
                 use_container_width=True,
                 hide_index=True,
-                num_rows="fixed", # No dejar agregar filas, solo editar las existentes
+                num_rows="fixed",
                 key=f"editor_{proyecto['id']}"
             )
 
-            # BOTÓN DE GUARDADO (Solo visible para Admin)
             if es_admin:
                 col_save, _ = st.columns([1, 4])
                 with col_save:
                     if st.button("💾 Guardar Notas de Pedido", type="primary"):
-                        # Actualizamos la memoria
                         st.session_state.proyectos[indice_proyecto]["contenido"]["tabla_resumen"] = df_editado.to_dict(orient="records")
-                        # Actualizamos el archivo
                         guardar_datos(st.session_state.proyectos)
                         st.success("¡Notas guardadas exitosamente!")
                         st.rerun()
-
         else:
-            # Mensaje por si el usuario no ha borrado los reportes viejos
-            st.warning("⚠️ Los datos guardados son antiguos. Por favor, ve al panel de Admin, borra los reportes y sube el Excel de nuevo.")
+            st.warning("⚠️ Reporte antiguo. Borra y sube de nuevo.")
 
         st.write("---")
 
-        # 4. VISTA PREVIA COMPLETA
-        with st.expander("🔍 Ver Base de Datos Completa (Excel Original)"):
+        # 4. VISTA PREVIA
+        with st.expander("🔍 Ver Base de Datos Completa"):
             df_visual = pd.DataFrame(datos["data"])
             st.dataframe(df_visual)
