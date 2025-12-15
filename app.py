@@ -3,15 +3,17 @@ import pandas as pd
 import datetime
 import os
 import json
+import io
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
-st.set_page_config(page_title="Panel de Informes de Materiales", layout="wide")
+st.set_page_config(page_title="Gestión de Control de Materiales", layout="wide")
 
-# Archivo para guardar los datos persistentemente (simulando LocalStorage)
-DB_FILE = "db_proyectos.json"
+# Archivo de base de datos
+DB_FILE = "db_proyectos_full.json"
 
-# --- FUNCIONES DE PERSISTENCIA (GUARDAR DATOS) ---
+# --- FUNCIONES DE PERSISTENCIA ---
 def cargar_datos():
+    """Carga la lista de proyectos desde el JSON."""
     if os.path.exists(DB_FILE):
         try:
             with open(DB_FILE, "r", encoding="utf-8") as f:
@@ -21,202 +23,199 @@ def cargar_datos():
     return []
 
 def guardar_datos(lista_proyectos):
+    """Guarda la lista completa en el JSON."""
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(lista_proyectos, f, default=str)
 
-# Inicializar estado de la sesión
+def convertir_df_a_registros(df):
+    """Convierte DataFrame a lista de diccionarios para guardar en JSON, manejando fechas."""
+    # Convertir fechas a string para JSON
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            df[col] = df[col].dt.strftime('%Y-%m-%d')
+    return df.to_dict('records')
+
+def procesar_datos_visualizacion(datos_lista):
+    """
+    Reconstruye el DataFrame desde la lista guardada y recastea tipos de datos.
+    """
+    df = pd.DataFrame(datos_lista)
+    # Intentar recuperar fechas
+    cols_posibles_fechas = ["FECHA PROMETIDA", "FECHA DE LLEGADA", "FECHA CREACION", "FECHA REQUERIDA"]
+    for col in cols_posibles_fechas:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors='coerce')
+    return df
+
+# Inicializar estado
 if 'proyectos' not in st.session_state:
     st.session_state.proyectos = cargar_datos()
 
-# --- LÓGICA DE PROCESAMIENTO (REPLICANDO TU JS) ---
-def procesar_excel(df):
-    """
-    Replica la función 'generarResumenEjecutivo' de tu Script JS.
-    """
-    # Normalizar nombres de columnas (quitar espacios extra y mayúsculas)
-    df.columns = [str(c).strip().upper() for c in df.columns]
-    
-    # KPIs Básicos
-    total_registros = len(df)
-    
-    # Suma de Cantidad Disponible (manejo de errores si no es número)
-    if "CANT DISPONIBLE" in df.columns:
-        total_disponible = pd.to_numeric(df["CANT DISPONIBLE"], errors='coerce').fillna(0).sum()
-    else:
-        total_disponible = 0
-
-    # Conteos de Estatus
-    conteo_sc = df["ESTATUS S.C."].value_counts().to_dict() if "ESTATUS S.C." in df.columns else {}
-    conteo_oc = df["ESTATUS O.C."].value_counts().to_dict() if "ESTATUS O.C." in df.columns else {}
-
-    # Lógica de Materiales Críticos
-    # Critico si: Cancelado OR (Prometida Vencida AND Sin fecha llegada)
-    criticos = []
-    
-    # Aseguramos formato fecha
-    hoy = pd.Timestamp.now()
-    
-    # Copia para trabajar fechas sin alertas
-    df_proc = df.copy()
-    
-    cols_fecha = ["FECHA PROMETIDA", "FECHA DE LLEGADA"]
-    for col in cols_fecha:
-        if col in df_proc.columns:
-            df_proc[col] = pd.to_datetime(df_proc[col], errors='coerce')
-
-    if "FECHA PROMETIDA" in df_proc.columns and "FECHA DE LLEGADA" in df_proc.columns:
-        for index, row in df_proc.iterrows():
-            est_sc = str(row.get("ESTATUS S.C.", "")).upper()
-            est_oc = str(row.get("ESTATUS O.C.", "")).upper()
-            
-            es_cancelado = ("CANCELADA" in est_sc) or ("CANCELADA" in est_oc)
-            
-            fecha_prom = row["FECHA PROMETIDA"]
-            fecha_lleg = row["FECHA DE LLEGADA"]
-            
-            # Lógica JS: prometidoVencido && sinLlegada
-            vencido = False
-            if pd.notnull(fecha_prom) and pd.isnull(fecha_lleg):
-                if fecha_prom < hoy:
-                    vencido = True
-            
-            if es_cancelado or vencido:
-                criticos.append({
-                    "No. S.C.": row.get("NO. S.C.", "-"),
-                    "Titulo": row.get("TITULO DE LA REQUISICION", "Sin título"),
-                    "Estatus SC": est_sc,
-                    "Prometida": row["FECHA PROMETIDA"].strftime('%d/%m/%Y') if pd.notnull(row["FECHA PROMETIDA"]) else "-",
-                    "Motivo": "CANCELADA" if es_cancelado else "VENCIDA"
-                })
-
-    return {
-        "total_registros": total_registros,
-        "total_disponible": total_disponible,
-        "conteo_sc": conteo_sc,
-        "conteo_oc": conteo_oc,
-        "criticos": criticos
-    }
-
-# --- INTERFAZ GRÁFICA ---
-
-# Estilos CSS personalizados para parecerse a tu HTML original
+# --- ESTILOS CSS ---
 st.markdown("""
     <style>
-    .big-font { font-size:20px !important; font-weight: bold; color: #1f4e79; }
-    .header-style { background-color: #1f4e79; color: white; padding: 10px; border-radius: 5px; }
-    div[data-testid="stMetricValue"] { font-size: 24px; }
+    .metric-card { background-color: #f0f2f6; padding: 15px; border-radius: 8px; border-left: 5px solid #1f4e79; }
+    .header-title { color: #1f4e79; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
-# Encabezado
-st.markdown('<div class="header-style"><h1>📋 Informe Ejecutivo de Control de Materiales</h1></div>', unsafe_allow_html=True)
-st.write("")
+st.title("🏗️ Gestión Integral de Materiales")
 
-# --- SIDEBAR: PANEL DE ADMINISTRACIÓN ---
+# --- BARRA LATERAL (ADMIN) ---
 with st.sidebar:
-    st.header("⚙️ Panel de Administración")
-    
-    # Input de contraseña (replicando tu JS)
-    password = st.text_input("Clave de Administrador", type="password")
+    st.header("⚙️ Administración")
+    password = st.text_input("Clave de Acceso", type="password")
     
     if password == "1234":
-        st.success("🔓 Acceso Concedido")
+        st.success("Modo Editor Activado")
         st.markdown("---")
-        st.subheader("Subir Nuevo Proyecto")
         
-        nuevo_nombre = st.text_input("Nombre del Proyecto (Ej. R-1916)")
-        nuevo_archivo = st.file_uploader("Cargar Excel (.xlsx)", type=["xlsx"])
+        # 1. CARGA DE NUEVOS PROYECTOS
+        with st.expander("📂 Cargar Nuevo Proyecto"):
+            nuevo_nombre = st.text_input("Nombre del Proyecto")
+            nuevo_archivo = st.file_uploader("Subir Excel", type=["xlsx", "xls"])
+            
+            if st.button("Procesar y Guardar"):
+                if nuevo_nombre and nuevo_archivo:
+                    try:
+                        # Leer Excel
+                        df = pd.read_excel(nuevo_archivo)
+                        
+                        # Limpiar nombres de columnas (Mayúsculas y sin espacios extra)
+                        df.columns = [str(c).strip().upper() for c in df.columns]
+                        
+                        # Guardar estructura
+                        nuevo_proyecto = {
+                            "id": f"proj_{datetime.datetime.now().timestamp()}",
+                            "nombre": nuevo_nombre,
+                            "data": convertir_df_a_registros(df) # Guardamos TODA la data
+                        }
+                        
+                        st.session_state.proyectos.append(nuevo_proyecto)
+                        guardar_datos(st.session_state.proyectos)
+                        st.success(f"Proyecto '{nuevo_nombre}' guardado correctamente.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+                else:
+                    st.warning("Falta nombre o archivo.")
         
-        if st.button("Procesar y Guardar"):
-            if nuevo_nombre and nuevo_archivo:
-                try:
-                    df = pd.read_excel(nuevo_archivo)
-                    resumen = procesar_excel(df)
-                    
-                    nuevo_proyecto = {
-                        "id": f"proj_{datetime.datetime.now().timestamp()}",
-                        "nombre": nuevo_nombre,
-                        "resumen": resumen
-                    }
-                    
-                    st.session_state.proyectos.append(nuevo_proyecto)
-                    guardar_datos(st.session_state.proyectos) # Guardar en JSON
-                    st.success(f"Proyecto '{nuevo_nombre}' guardado éxito.")
-                    st.rerun() # Recargar para actualizar lista
-                except Exception as e:
-                    st.error(f"Error al leer el Excel: {e}")
-            else:
-                st.warning("Falta nombre o archivo.")
-        
+        # 2. GESTIÓN (ELIMINAR)
         st.markdown("---")
-        st.subheader("Gestionar Proyectos")
-        if st.session_state.proyectos:
-            df_proys = pd.DataFrame(st.session_state.proyectos)
-            st.dataframe(df_proys[["nombre"]], hide_index=True)
-            
-            if st.button("🗑️ Eliminar TODOS los proyectos", type="primary"):
-                st.session_state.proyectos = []
-                guardar_datos([])
-                st.rerun()
-        else:
-            st.info("No hay proyectos cargados.")
-            
-    else:
-        if password:
-            st.error("Clave incorrecta")
-        st.info("Introduce la clave para cargar o borrar proyectos.")
+        if st.button("🗑️ Eliminar TODOS los datos", type="primary"):
+            st.session_state.proyectos = []
+            guardar_datos([])
+            st.rerun()
 
-# --- ZONA PÚBLICA (MAIN) ---
+# --- ÁREA PRINCIPAL ---
 
-# Selector de Proyecto
 if not st.session_state.proyectos:
-    st.info("👋 No hay proyectos cargados. Por favor, usa el panel de administración (izquierda) para subir uno.")
+    st.info("👈 No hay proyectos. Ingresa la clave '1234' en el menú lateral para cargar uno.")
 else:
-    nombres_proyectos = [p["nombre"] for p in st.session_state.proyectos]
-    seleccion = st.selectbox("📂 Seleccione un proyecto:", nombres_proyectos)
+    # 1. SELECTOR DE PROYECTO
+    nombres = [p["nombre"] for p in st.session_state.proyectos]
+    seleccion = st.selectbox("Selecciona el Proyecto a visualizar/editar:", nombres)
     
-    # Buscar datos del proyecto seleccionado
-    proyecto_actual = next((p for p in st.session_state.proyectos if p["nombre"] == seleccion), None)
+    # Encontrar el índice del proyecto seleccionado
+    idx_proyecto = next((i for i, p in enumerate(st.session_state.proyectos) if p["nombre"] == seleccion), None)
     
-    if proyecto_actual:
-        r = proyecto_actual["resumen"]
+    if idx_proyecto is not None:
+        proyecto_data_raw = st.session_state.proyectos[idx_proyecto]["data"]
         
-        st.markdown("---")
-        st.markdown(f"<div class='big-font'>Resumen: {proyecto_actual['nombre']}</div>", unsafe_allow_html=True)
+        # Convertimos la data cruda a DataFrame para trabajar
+        df_activo = procesar_datos_visualizacion(proyecto_data_raw)
         
-        # 1. Métricas Principales (Tarjetas)
-        col1, col2 = st.columns(2)
-        col1.metric("Total de Partidas", r["total_registros"])
-        col2.metric("Cantidad Disponible", f"{r['total_disponible']:,.2f}")
+        # --- PESTAÑAS DE TRABAJO ---
+        tab_resumen, tab_detalle, tab_criticos = st.tabs(["📊 Resumen Ejecutivo", "📝 Edición y Detalle", "🚨 Críticos"])
         
-        st.markdown("---")
-        
-        # 2. Gráficos de Estatus (Reemplaza las listas de texto del HTML)
-        c1, c2 = st.columns(2)
-        
-        with c1:
-            st.subheader("Estatus S.C.")
-            if r["conteo_sc"]:
-                df_sc = pd.DataFrame(list(r["conteo_sc"].items()), columns=["Estatus", "Cantidad"])
-                st.dataframe(df_sc, use_container_width=True, hide_index=True)
-            else:
-                st.info("Sin datos de S.C.")
+        # --- TAB 1: RESUMEN (CÁLCULO EN TIEMPO REAL) ---
+        with tab_resumen:
+            st.markdown(f"### Estatus: {seleccion}")
+            
+            # Cálculos dinámicos (se actualizan si editas en la Tab 2)
+            total_items = len(df_activo)
+            
+            # Verificar columnas existentes para evitar errores
+            col_sc = "ESTATUS S.C." if "ESTATUS S.C." in df_activo.columns else df_activo.columns[0]
+            col_oc = "ESTATUS O.C." if "ESTATUS O.C." in df_activo.columns else ""
+            col_cant = "CANT DISPONIBLE" if "CANT DISPONIBLE" in df_activo.columns else ""
+            
+            # KPIs
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Total Partidas", total_items)
+            
+            if col_cant:
+                total_disp = pd.to_numeric(df_activo[col_cant], errors='coerce').sum()
+                c2.metric("Cantidad Disponible Total", f"{total_disp:,.2f}")
+            
+            # Gráficos
+            col_g1, col_g2 = st.columns(2)
+            
+            with col_g1:
+                st.subheader("Estatus S.C.")
+                if col_sc:
+                    st.bar_chart(df_activo[col_sc].value_counts())
+            
+            with col_g2:
+                st.subheader("Estatus O.C.")
+                if col_oc:
+                    st.bar_chart(df_activo[col_oc].value_counts())
 
-        with c2:
-            st.subheader("Estatus O.C.")
-            if r["conteo_oc"]:
-                df_oc = pd.DataFrame(list(r["conteo_oc"].items()), columns=["Estatus", "Cantidad"])
-                st.dataframe(df_oc, use_container_width=True, hide_index=True)
-            else:
-                st.info("Sin datos de O.C.")
+        # --- TAB 2: EDICIÓN Y DETALLE (LO QUE PEDISTE) ---
+        with tab_detalle:
+            st.info("💡 Puedes editar las celdas directamente aquí. Al finalizar, presiona 'Guardar Cambios' abajo.")
+            
+            # EDITOR DE DATOS INTERACTIVO
+            # num_rows="dynamic" permite añadir filas nuevas si quisieras
+            df_editado = st.data_editor(
+                df_activo, 
+                num_rows="dynamic", 
+                use_container_width=True,
+                height=500,
+                key="editor_datos"
+            )
+            
+            # BOTÓN DE GUARDADO
+            col_save, col_info = st.columns([1, 4])
+            if col_save.button("💾 Guardar Cambios Realizados"):
+                # Convertir el DF editado de vuelta a lista de diccionarios
+                nueva_data = convertir_df_a_registros(df_editado)
+                
+                # Actualizar en memoria
+                st.session_state.proyectos[idx_proyecto]["data"] = nueva_data
+                
+                # Guardar en archivo JSON
+                guardar_datos(st.session_state.proyectos)
+                
+                st.success("✅ ¡Cambios guardados y reporte actualizado!")
+                st.rerun() # Recargar para que los gráficos del Tab 1 tomen los nuevos datos
 
-        # 3. Materiales Críticos
-        st.markdown("---")
-        st.subheader("🚨 Materiales Críticos (Cancelados o Vencidos)")
-        
-        criticos = r["criticos"]
-        if criticos:
-            # Mostrar tabla bonita
-            st.dataframe(pd.DataFrame(criticos), use_container_width=True)
-        else:
-            st.success("✅ ¡Excelente! No se detectaron materiales críticos con la lógica actual.")
+        # --- TAB 3: CRÍTICOS ---
+        with tab_criticos:
+            st.subheader("Filtrado Automático de Retrasos")
+            
+            # Lógica de críticos (igual que antes pero dinámica)
+            if "FECHA PROMETIDA" in df_editado.columns and "FECHA DE LLEGADA" in df_editado.columns:
+                hoy = pd.Timestamp.now()
+                
+                # Filtro: Fecha prometida vencida Y (Fecha llegada vacía O Estatus no entregado)
+                # Esta lógica depende de tus datos, aquí un ejemplo genérico:
+                mask_vencidos = (
+                    (df_editado["FECHA PROMETIDA"] < hoy) & 
+                    (df_editado["FECHA DE LLEGADA"].isna())
+                )
+                
+                # Filtro: Cancelados
+                mask_cancelados = pd.Series(False, index=df_editado.index)
+                if col_sc:
+                    mask_cancelados = df_editado[col_sc].astype(str).str.contains("CANCELADA", case=False, na=False)
+                
+                df_criticos = df_editado[mask_vencidos | mask_cancelados]
+                
+                if not df_criticos.empty:
+                    st.error(f"Se encontraron {len(df_criticos)} partidas críticas.")
+                    st.dataframe(df_criticos, use_container_width=True)
+                else:
+                    st.success("No hay materiales críticos pendientes por fecha.")
+            else:
+                st.warning("No se encontraron las columnas de fechas necesarias para calcular críticos.")
