@@ -29,67 +29,45 @@ def guardar_datos(lista_proyectos):
 if 'proyectos' not in st.session_state:
     st.session_state.proyectos = cargar_datos()
 
-# --- LÓGICA DE PROCESAMIENTO (FILTROS ESTRICTOS) ---
+# --- LÓGICA DE PROCESAMIENTO (MISMA LÓGICA QUE "Items recibidos") ---
 def procesar_nuevo_excel(df_raw):
     """
-    1. Filtra filas donde Col A es numérica.
-    2. Filtra filas donde Col M es ESTRICTAMENTE una fecha válida.
+    MISMOS CRITERIOS que "Items recibidos": 
+    1. Col A numérica
+    2. Col O empieza con 'RE'
     """
-    # Verificación mínima de columnas
     if df_raw.shape[1] < 15:
         return {"error": "El archivo no tiene suficientes columnas (mínimo hasta la O)."}
 
-    # --- FILTRADO NIVEL 1: COLUMNA A (Debe ser Número) ---
-    # Convertimos Col A (índice 0) a numérico. Errores = NaN
+    # --- FILTRADO 1: COLUMNA A (Número) ---
     df_raw['Temp_A_Num'] = pd.to_numeric(df_raw.iloc[:, 0], errors='coerce')
-    
-    # Eliminamos filas donde A no sea número
     df = df_raw[df_raw['Temp_A_Num'].notna()].copy()
     
     if df.empty:
         return {"error": "No se encontraron filas con SC numérico en la Columna A."}
 
-    # --- FILTRADO NIVEL 2: COLUMNA M (Debe ser Fecha) ---
-    # Convertimos Col M (índice 12) a fecha. 
-    # 'errors=coerce' convierte textos, espacios y vacíos en NaT (Not a Time)
-    df['Temp_M_Fecha'] = pd.to_datetime(df.iloc[:, 12], errors='coerce', dayfirst=True)
-    
-    # Eliminamos filas donde la fecha no sea válida (NaT)
-    df = df[df['Temp_M_Fecha'].notna()].copy()
-
-    # Limpieza de columnas temporales
-    df = df.drop(columns=['Temp_A_Num', 'Temp_M_Fecha'])
+    # --- FILTRADO 2: COLUMNA O empieza con 'RE' (IGUAL que Items recibidos) ---
+    columna_O = df.iloc[:, 14].astype(str).str.strip()
+    df = df[columna_O.str.startswith('RE')].copy()
 
     if df.empty:
-         return {"error": "Se encontraron SC válidos, pero NINGUNO tiene fecha válida en Columna M."}
+        return {"error": "No hay items con estado 'RE' en columna O."}
 
     # --- CÁLCULO DE KPIs ---
-    # Items Requisitados (Columna F = índice 5)
-    items_requisitados = int(df.iloc[:, 5].count())
-    
-    # Items Recibidos (Columna O = índice 14, empieza con 'RE')
-    columna_O = df.iloc[:, 14].astype(str).str.strip()
-    items_recibidos = int(columna_O[columna_O.str.startswith('RE')].count())
-
-    # Items sin OC (Columna H = índice 7, vacíos)
+    items_requisitados = int(df.iloc[:, 5].count())  # Items con RE
+    items_recibidos = items_requisitados  # Todos los filtrados son recibidos
     items_sin_oc = int(df.iloc[:, 7].isnull().sum())
+    avance = 100.0  # Todos son recibidos
 
-    # Porcentaje de Avance
-    if items_requisitados > 0:
-        avance = (items_recibidos / items_requisitados) * 100
-    else:
-        avance = 0.0
-
-    # --- GENERACIÓN DE LA TABLA RESUMEN ---
+    # --- TABLA RESUMEN (solo items con RE) ---
     tabla_resumen = []
     
     for index, row in df.iterrows():
-        # Extracción segura de datos
-        sc_val = str(row.iloc[0]) if pd.notnull(row.iloc[0]) else ""       # A
-        cant_val = str(row.iloc[3]) if pd.notnull(row.iloc[3]) else ""     # D
-        item_val = str(row.iloc[5]) if pd.notnull(row.iloc[5]) else ""     # F
-        oc_val = str(row.iloc[7]) if pd.notnull(row.iloc[7]) else ""       # H
-        fecha_val = str(row.iloc[12]) if pd.notnull(row.iloc[12]) else ""  # M
+        sc_val = str(row.iloc[0]) if pd.notnull(row.iloc[0]) else ""
+        cant_val = str(row.iloc[3]) if pd.notnull(row.iloc[3]) else ""
+        item_val = str(row.iloc[5]) if pd.notnull(row.iloc[5]) else ""
+        oc_val = str(row.iloc[7]) if pd.notnull(row.iloc[7]) else ""
+        fecha_val = str(row.iloc[12]) if pd.notnull(row.iloc[12]) else ""
         
         tabla_resumen.append({
             "SC": sc_val,
@@ -97,10 +75,10 @@ def procesar_nuevo_excel(df_raw):
             "CANTIDAD": cant_val,
             "ORDEN DE COMPRA": oc_val,
             "FECHA DE LLEGADA": fecha_val,
-            "LISTA DE PEDIDO": ""  # Campo editable vacío
+            "LISTA DE PEDIDO": "",
+            "ESTADO": "RE"  # Para referencia
         })
 
-    # Datos para vista previa (primeras 500 filas)
     data_preview = df.fillna("").head(500).to_dict(orient='records')
 
     return {
@@ -116,7 +94,6 @@ def procesar_nuevo_excel(df_raw):
     }
 
 # --- INTERFAZ GRÁFICA ---
-
 st.markdown("""
     <h1 style='text-align: center;'>⚓ Dashboard: R-1926 MONFORTE DE LEMOS</h1>
     <p style='text-align: center;'>Sistema de Control de Materiales</p>
@@ -142,7 +119,6 @@ with st.sidebar:
         if st.button("Procesar y Guardar"):
             if nombre_proyecto and archivo_subido:
                 try:
-                    # LEER EXCEL: header=5 (Fila 6 tiene títulos, datos empiezan en 7)
                     if archivo_subido.name.endswith('.csv'):
                         df = pd.read_csv(archivo_subido, header=5)
                     else:
@@ -176,7 +152,6 @@ with st.sidebar:
         st.info("Introduce la clave '1234'.")
 
 # --- ÁREA PRINCIPAL ---
-
 if not st.session_state.proyectos:
     st.info("👋 No hay reportes cargados.")
 else:
@@ -194,7 +169,7 @@ else:
         
         # KPIS
         c1, c2, c3, c4 = st.columns(4)
-        with c1: st.metric("Items en Lista", kpis["items_requisitados"], help="Filtrados por Fecha")
+        with c1: st.metric("Items Recibidos", kpis["items_requisitados"], help="Col O = 'RE'")
         with c2: st.metric("Items Recibidos", kpis["items_recibidos"])
         with c3: st.metric("Items sin OC", kpis["items_sin_oc"])
         with c4: st.metric("Avance", f"{kpis['avance']:.1f}%")
@@ -204,17 +179,17 @@ else:
         col_graf, _ = st.columns([1, 0.1])
         with col_graf:
             df_graf = pd.DataFrame({
-                'Estado': ['Total', 'Recibidos', 'Sin OC'],
-                'Cantidad': [kpis["items_requisitados"], kpis["items_recibidos"], kpis["items_sin_oc"]]
+                'Estado': ['Recibidos', 'Sin OC'],
+                'Cantidad': [kpis["items_recibidos"], kpis["items_sin_oc"]]
             })
             fig = px.bar(df_graf, x='Estado', y='Cantidad', color='Estado', text_auto=True,
-                         color_discrete_map={'Total': '#3498db', 'Recibidos': '#2ecc71', 'Sin OC': '#e74c3c'}, height=300)
+                         color_discrete_map={'Recibidos': '#2ecc71', 'Sin OC': '#e74c3c'}, height=300)
             st.plotly_chart(fig, use_container_width=True)
 
         st.write("---")
         
-        # TABLA
-        st.subheader("📋 Gestión de Pedidos")
+        # TABLA (SOLO items con 'RE' en columna O)
+        st.subheader("📋 Gestión de Pedidos (Solo Items Recibidos)")
         raw_tabla = datos.get("tabla_resumen", [])
         
         if raw_tabla:
@@ -226,6 +201,7 @@ else:
                 "CANTIDAD": st.column_config.TextColumn("Cant.", disabled=True),
                 "ORDEN DE COMPRA": st.column_config.TextColumn("O.C.", disabled=True),
                 "FECHA DE LLEGADA": st.column_config.TextColumn("Llegada", disabled=True),
+                "ESTADO": st.column_config.TextColumn("Estado", disabled=True),
                 "LISTA DE PEDIDO": st.column_config.TextColumn(
                     "📝 Lista de Pedido", 
                     disabled=not es_admin,
@@ -233,7 +209,7 @@ else:
                 )
             }
             
-            st.info(f"Mostrando {len(df_tabla)} items válidos.")
+            st.info(f"🟢 Mostrando {len(df_tabla)} items RECIBIDOS (Col O = 'RE')")
             
             df_editado = st.data_editor(
                 df_tabla,
@@ -251,7 +227,7 @@ else:
                     st.success("Guardado.")
                     st.rerun()
         else:
-            st.warning("No hay datos para mostrar.")
+            st.warning("No hay items recibidos.")
 
         with st.expander("🔍 Ver Datos Originales"):
             st.dataframe(pd.DataFrame(datos["data"]))
