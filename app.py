@@ -249,4 +249,4 @@ else:
         # 4. VISTA PREVIA
         with st.expander("🔍 Ver Base de Datos Completa"):
             df_visual = pd.DataFrame(datos["data"])
-            st.dataframe(df_visual)}
+            st.dataframe(df_visual)
