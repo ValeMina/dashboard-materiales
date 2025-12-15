@@ -29,44 +29,43 @@ def guardar_datos(lista_proyectos):
 if 'proyectos' not in st.session_state:
     st.session_state.proyectos = cargar_datos()
 
-# --- LÓGICA ORIGINAL CORREGIDA ---
+# --- LÓGICA CORREGIDA: TABLA = SOLO ITEMS RECIBIDOS ---
 def procesar_nuevo_excel(df_raw):
     """
-    LÓGICA ORIGINAL:
-    1. Filtra SOLO Col A numérica → Items Requisitados
-    2. Cuenta Items Recibidos (Col O='RE') de esos
-    3. TABLA muestra TODOS los Items Requisitados
+    1. Items Requisitados = Col A numérica
+    2. Items Recibidos = Col O='RE' (de los requisitados)
+    3. TABLA = SOLO Items Recibidos (Col O='RE')
     """
     if df_raw.shape[1] < 15:
         return {"error": "El archivo no tiene suficientes columnas (mínimo hasta la O)."}
 
-    # --- FILTRADO: SOLO COLUMNA A numérica ---
+    # --- PASO 1: Items Requisitados (Col A numérica) ---
     df_raw['Temp_A_Num'] = pd.to_numeric(df_raw.iloc[:, 0], errors='coerce')
-    df = df_raw[df_raw['Temp_A_Num'].notna()].copy()
+    df_requisitados = df_raw[df_raw['Temp_A_Num'].notna()].copy()
     
-    if df.empty:
+    if df_requisitados.empty:
         return {"error": "No se encontraron filas con SC numérico en la Columna A."}
 
-    # --- CÁLCULOS KPIs (LÓGICA ORIGINAL) ---
-    items_requisitados = int(df.iloc[:, 5].count())  # Col F de TODOS los filtrados por A
-    
-    # Items Recibidos: Col O empieza con 'RE' (de los items_requisitados)
-    columna_O = df.iloc[:, 14].astype(str).str.strip()
-    items_recibidos = int(columna_O[columna_O.str.startswith('RE')].count())
-    
-    items_sin_oc = int(df.iloc[:, 7].isnull().sum())
+    # --- PASO 2: Items Recibidos (Col O='RE') ---
+    columna_O = df_requisitados.iloc[:, 14].astype(str).str.strip()
+    df_recibidos = df_requisitados[columna_O.str.startswith('RE')].copy()
+
+    # --- CÁLCULOS KPIs ---
+    items_requisitados = int(df_requisitados.iloc[:, 5].count())
+    items_recibidos = int(len(df_recibidos))
+    items_sin_oc = int(df_requisitados.iloc[:, 7].isnull().sum())
     avance = (items_recibidos / items_requisitados * 100) if items_requisitados > 0 else 0.0
 
-    # --- TABLA: TODOS los Items Requisitados ---
+    # --- TABLA: SOLO Items RECIBIDOS ---
     tabla_resumen = []
     
-    for index, row in df.iterrows():
+    for index, row in df_recibidos.iterrows():
         sc_val = str(row.iloc[0]) if pd.notnull(row.iloc[0]) else ""
         cant_val = str(row.iloc[3]) if pd.notnull(row.iloc[3]) else ""
         item_val = str(row.iloc[5]) if pd.notnull(row.iloc[5]) else ""
         oc_val = str(row.iloc[7]) if pd.notnull(row.iloc[7]) else ""
         fecha_val = str(row.iloc[12]) if pd.notnull(row.iloc[12]) else ""
-        estado_o = str(row.iloc[14]).strip()[:2] if pd.notnull(row.iloc[14]) else ""
+        estado_o = str(row.iloc[14]).strip()[:10] if pd.notnull(row.iloc[14]) else ""
         
         tabla_resumen.append({
             "SC": sc_val,
@@ -78,7 +77,7 @@ def procesar_nuevo_excel(df_raw):
             "LISTA DE PEDIDO": ""
         })
 
-    data_preview = df.fillna("").head(500).to_dict(orient='records')
+    data_preview = df_requisitados.fillna("").head(500).to_dict(orient='records')
 
     return {
         "kpis": {
@@ -89,7 +88,7 @@ def procesar_nuevo_excel(df_raw):
         },
         "tabla_resumen": tabla_resumen,
         "data": data_preview,
-        "fecha_carga": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        "fecha_carga": datetime.datetime.now().().strftime("%Y-%m-%d %H:%M")
     }
 
 # --- INTERFAZ GRÁFICA ---
@@ -166,7 +165,7 @@ else:
         
         st.markdown(f"### Reporte: {proyecto['nombre']} (Cargado: {datos['fecha_carga']})")
         
-        # KPIS ORIGINALES
+        # KPIS
         c1, c2, c3, c4 = st.columns(4)
         with c1: st.metric("Items Requisitados", kpis["items_requisitados"])
         with c2: st.metric("Items Recibidos", kpis["items_recibidos"])
@@ -174,7 +173,7 @@ else:
         with c4: st.metric("Avance", f"{kpis['avance']:.1f}%")
         st.write("---")
         
-        # GRÁFICA ORIGINAL
+        # GRÁFICA
         col_graf, _ = st.columns([1, 0.1])
         with col_graf:
             df_graf = pd.DataFrame({
@@ -187,8 +186,8 @@ else:
 
         st.write("---")
         
-        # TABLA: MUESTRA TODOS LOS ITEMS REQUISITADOS
-        st.subheader("📋 Gestión de Pedidos")
+        # TABLA: SOLO ITEMS RECIBIDOS
+        st.subheader("📋 Gestión de Pedidos (Solo Items Recibidos)")
         raw_tabla = datos.get("tabla_resumen", [])
         
         if raw_tabla:
@@ -208,7 +207,7 @@ else:
                 )
             }
             
-            st.info(f"📊 Mostrando {len(df_tabla)} items requisitados (igual que KPI superior)")
+            st.success(f"✅ Mostrando {len(df_tabla)} items RECIBIDOS (igual al KPI 'Items Recibidos')")
             
             df_editado = st.data_editor(
                 df_tabla,
@@ -226,7 +225,7 @@ else:
                     st.success("Guardado.")
                     st.rerun()
         else:
-            st.warning("No hay datos para mostrar.")
+            st.warning("❌ No hay items recibidos (Col O no tiene 'RE')")
 
-        with st.expander("🔍 Ver Datos Originales"):
+        with st.expander("🔍 Ver Datos Originales (Todos los requisitados)"):
             st.dataframe(pd.DataFrame(datos["data"]))
