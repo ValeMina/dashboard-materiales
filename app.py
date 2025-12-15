@@ -29,18 +29,26 @@ def guardar_datos(lista_proyectos):
 if 'proyectos' not in st.session_state:
     st.session_state.proyectos = cargar_datos()
 
-# --- LÓGICA DE PROCESAMIENTO ---
-def procesar_nuevo_excel(df):
+# --- LÓGICA DE PROCESAMIENTO (ACTUALIZADA) ---
+def procesar_nuevo_excel(df_raw):
     """
     Calcula KPIs y genera la Tabla Resumen con las columnas específicas.
+    Aplica filtro numérico en columna A.
     """
     # Verificación mínima de columnas
-    if df.shape[1] < 15:
+    if df_raw.shape[1] < 15:
         return {"error": "El archivo no tiene suficientes columnas (mínimo hasta la O)."}
 
-    # --- 1. CÁLCULO DE KPIs ---
+    # --- 0. FILTRADO INICIAL (NUEVO) ---
+    # Convertimos la columna A (índice 0) a numérico, forzando errores a NaN
+    # Esto elimina encabezados repetidos, filas vacías o texto basura.
+    df_raw['SC_Numeric'] = pd.to_numeric(df_raw.iloc[:, 0], errors='coerce')
+    
+    # Creamos un dataframe limpio solo con las filas válidas
+    df = df_raw[df_raw['SC_Numeric'].notna()].copy()
+
+    # --- 1. CÁLCULO DE KPIs (Usando el DF filtrado) ---
     # Items Requisitados (Columna F = índice 5)
-    # Al leer desde la fila 7, el encabezado ya no estorba, así que contamos todo lo que no sea nulo.
     items_requisitados = int(df.iloc[:, 5].count())
     
     # Items Recibidos (Columna O = índice 14, empieza con 'RE')
@@ -48,6 +56,7 @@ def procesar_nuevo_excel(df):
     items_recibidos = int(columna_O[columna_O.str.startswith('RE')].count())
 
     # Items sin OC (Columna H = índice 7, vacíos)
+    # En pandas, isnull() o celdas vacías
     items_sin_oc = int(df.iloc[:, 7].isnull().sum())
 
     # Porcentaje de Avance
@@ -59,29 +68,38 @@ def procesar_nuevo_excel(df):
     # --- 2. GENERACIÓN DE LA TABLA "LISTA DE PEDIDO" ---
     tabla_resumen = []
     
+    # Iteramos sobre el dataframe YA FILTRADO
     for index, row in df.iterrows():
-        # Extracción segura de datos
-        sc_val = str(row.iloc[0]) if pd.notnull(row.iloc[0]) else ""       # Columna A
-        cant_val = str(row.iloc[3]) if pd.notnull(row.iloc[3]) else ""     # Columna D
-        item_val = str(row.iloc[5]) if pd.notnull(row.iloc[5]) else ""     # Columna F
-        oc_val = str(row.iloc[7]) if pd.notnull(row.iloc[7]) else ""       # Columna H
-        fecha_val = str(row.iloc[12]) if pd.notnull(row.iloc[12]) else ""  # Columna M
+        # Mapeo según tus indicaciones:
+        # "SC" = Celda A (índice 0)
+        # "CANTIDAD" = Celda D (índice 3)
+        # "ITEM" = Celda F (índice 5)
+        # "ORDEN DE COMPRA" = Celda H (índice 7)
+        # "FECHA DE LLEGADA" = Celda M (índice 12)
         
-        # Filtro simple para evitar filas vacías que a veces quedan al final del Excel
-        if sc_val == "" and item_val == "":
-            continue
-
+        sc_val = str(row.iloc[0]) if pd.notnull(row.iloc[0]) else ""
+        cant_val = str(row.iloc[3]) if pd.notnull(row.iloc[3]) else ""
+        item_val = str(row.iloc[5]) if pd.notnull(row.iloc[5]) else ""
+        oc_val = str(row.iloc[7]) if pd.notnull(row.iloc[7]) else ""
+        fecha_val = str(row.iloc[12]) if pd.notnull(row.iloc[12]) else ""
+        
         tabla_resumen.append({
             "SC": sc_val,
             "ITEM": item_val,
             "CANTIDAD": cant_val,
             "ORDEN DE COMPRA": oc_val,
             "FECHA DE LLEGADA": fecha_val,
-            "LISTA DE PEDIDO": ""  # Campo editable
+            "LISTA DE PEDIDO": ""  # Campo editable (inicialmente vacío)
         })
 
-    # Datos completos para vista previa (primeras 500 filas)
-    data_preview = df.fillna("").head(500).to_dict(orient='records')
+    # Datos completos para vista previa (usamos el df filtrado para que se vea limpio)
+    # Eliminamos la columna auxiliar de filtrado antes de mostrar
+    if 'SC_Numeric' in df.columns:
+        df_clean_preview = df.drop(columns=['SC_Numeric'])
+    else:
+        df_clean_preview = df
+
+    data_preview = df_clean_preview.fillna("").head(500).to_dict(orient='records')
 
     return {
         "kpis": {
@@ -119,15 +137,18 @@ with st.sidebar:
         
         st.subheader("📤 Subir Nuevo Proyecto")
         nombre_proyecto = st.text_input("Nombre del Reporte (Ej. Semana 4)")
-        archivo_subido = st.file_uploader("Archivo Excel", type=["xlsx", "xls"])
+        archivo_subido = st.file_uploader("Archivo Excel", type=["xlsx", "xls", "csv"])
         
         if st.button("Procesar y Guardar"):
             if nombre_proyecto and archivo_subido:
                 try:
-                    # AQUÍ ESTÁ EL CAMBIO IMPORTANTE:
-                    # header=6 significa que la fila 7 del Excel (índice 6) contiene los títulos
-                    # y los datos empiezan en la fila 8.
-                    df = pd.read_excel(archivo_subido, header=6)
+                    # AJUSTE IMPORTANTE: header=5
+                    # El índice 5 corresponde a la fila 6 (donde están los títulos)
+                    # Los datos comenzarán en la fila 7.
+                    if archivo_subido.name.endswith('.csv'):
+                        df = pd.read_csv(archivo_subido, header=5)
+                    else:
+                        df = pd.read_excel(archivo_subido, header=5)
                     
                     resultado = procesar_nuevo_excel(df)
                     
@@ -142,7 +163,7 @@ with st.sidebar:
                         
                         st.session_state.proyectos.append(nuevo_registro)
                         guardar_datos(st.session_state.proyectos)
-                        st.success(f"Reporte '{nombre_proyecto}' guardado correctamente (Iniciando en fila 7).")
+                        st.success(f"Reporte '{nombre_proyecto}' guardado correctamente (Datos numéricos filtrados).")
                         st.rerun()
                 except Exception as e:
                     st.error(f"Error crítico al leer el archivo: {e}")
@@ -163,7 +184,7 @@ with st.sidebar:
 # --- ÁREA PRINCIPAL ---
 
 if not st.session_state.proyectos:
-    st.info("👋 No hay reportes cargados. Ve al panel admin y sube el Excel (recuerda que leerá desde la fila 7).")
+    st.info("👋 No hay reportes cargados. Ve al panel admin y sube el Excel.")
 else:
     # Selector de proyecto
     opciones = [p["nombre"] for p in st.session_state.proyectos]
@@ -180,8 +201,8 @@ else:
         
         # 1. KPI CARDS
         c1, c2, c3, c4 = st.columns(4)
-        with c1: st.metric("Items Requisitados", kpis["items_requisitados"], help="Columna F")
-        with c2: st.metric("Items Recibidos", kpis["items_recibidos"], help="Columna O ('RE')")
+        with c1: st.metric("Items Requisitados", kpis["items_requisitados"], help="Conteo de Items válidos")
+        with c2: st.metric("Items Recibidos", kpis["items_recibidos"], help="Estatus 'RECV' en Col O")
         with c3: st.metric("Items sin OC", kpis["items_sin_oc"], help="Columna H vacía")
         with c4: st.metric("Porcentaje de Avance", f"{kpis['avance']:.1f}%", delta="Progreso Global")
             
@@ -222,7 +243,7 @@ else:
                 )
             }
 
-            st.info(f"Mostrando {len(df_tabla)} items importados.")
+            st.info(f"Mostrando {len(df_tabla)} items importados (Filtrados numéricamente).")
 
             df_editado = st.data_editor(
                 df_tabla,
@@ -242,11 +263,11 @@ else:
                         st.success("¡Notas guardadas exitosamente!")
                         st.rerun()
         else:
-            st.warning("⚠️ Reporte antiguo. Borra y sube de nuevo.")
+            st.warning("⚠️ Reporte antiguo o vacío. Borra y sube de nuevo.")
 
         st.write("---")
 
         # 4. VISTA PREVIA
-        with st.expander("🔍 Ver Base de Datos Completa"):
+        with st.expander("🔍 Ver Datos Originales (Filtrados)"):
             df_visual = pd.DataFrame(datos["data"])
             st.dataframe(df_visual)
