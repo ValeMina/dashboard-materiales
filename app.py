@@ -1,160 +1,222 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+import datetime
+import os
+import json
 
-# Configuración de la página
-st.set_page_config(page_title="Dashboard Materiales", layout="wide")
+# --- CONFIGURACIÓN DE LA PÁGINA ---
+st.set_page_config(page_title="Panel de Informes de Materiales", layout="wide")
 
-st.title("📊 Comparador de Materiales v2.0")
-st.markdown("Carga tus archivos. El sistema buscará automáticamente dónde comienzan los datos.")
+# Archivo para guardar los datos persistentemente (simulando LocalStorage)
+DB_FILE = "db_proyectos.json"
 
-# --- BARRA LATERAL ---
+# --- FUNCIONES DE PERSISTENCIA (GUARDAR DATOS) ---
+def cargar_datos():
+    if os.path.exists(DB_FILE):
+        try:
+            with open(DB_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return []
+    return []
+
+def guardar_datos(lista_proyectos):
+    with open(DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(lista_proyectos, f, default=str)
+
+# Inicializar estado de la sesión
+if 'proyectos' not in st.session_state:
+    st.session_state.proyectos = cargar_datos()
+
+# --- LÓGICA DE PROCESAMIENTO (REPLICANDO TU JS) ---
+def procesar_excel(df):
+    """
+    Replica la función 'generarResumenEjecutivo' de tu Script JS.
+    """
+    # Normalizar nombres de columnas (quitar espacios extra y mayúsculas)
+    df.columns = [str(c).strip().upper() for c in df.columns]
+    
+    # KPIs Básicos
+    total_registros = len(df)
+    
+    # Suma de Cantidad Disponible (manejo de errores si no es número)
+    if "CANT DISPONIBLE" in df.columns:
+        total_disponible = pd.to_numeric(df["CANT DISPONIBLE"], errors='coerce').fillna(0).sum()
+    else:
+        total_disponible = 0
+
+    # Conteos de Estatus
+    conteo_sc = df["ESTATUS S.C."].value_counts().to_dict() if "ESTATUS S.C." in df.columns else {}
+    conteo_oc = df["ESTATUS O.C."].value_counts().to_dict() if "ESTATUS O.C." in df.columns else {}
+
+    # Lógica de Materiales Críticos
+    # Critico si: Cancelado OR (Prometida Vencida AND Sin fecha llegada)
+    criticos = []
+    
+    # Aseguramos formato fecha
+    hoy = pd.Timestamp.now()
+    
+    # Copia para trabajar fechas sin alertas
+    df_proc = df.copy()
+    
+    cols_fecha = ["FECHA PROMETIDA", "FECHA DE LLEGADA"]
+    for col in cols_fecha:
+        if col in df_proc.columns:
+            df_proc[col] = pd.to_datetime(df_proc[col], errors='coerce')
+
+    if "FECHA PROMETIDA" in df_proc.columns and "FECHA DE LLEGADA" in df_proc.columns:
+        for index, row in df_proc.iterrows():
+            est_sc = str(row.get("ESTATUS S.C.", "")).upper()
+            est_oc = str(row.get("ESTATUS O.C.", "")).upper()
+            
+            es_cancelado = ("CANCELADA" in est_sc) or ("CANCELADA" in est_oc)
+            
+            fecha_prom = row["FECHA PROMETIDA"]
+            fecha_lleg = row["FECHA DE LLEGADA"]
+            
+            # Lógica JS: prometidoVencido && sinLlegada
+            vencido = False
+            if pd.notnull(fecha_prom) and pd.isnull(fecha_lleg):
+                if fecha_prom < hoy:
+                    vencido = True
+            
+            if es_cancelado or vencido:
+                criticos.append({
+                    "No. S.C.": row.get("NO. S.C.", "-"),
+                    "Titulo": row.get("TITULO DE LA REQUISICION", "Sin título"),
+                    "Estatus SC": est_sc,
+                    "Prometida": row["FECHA PROMETIDA"].strftime('%d/%m/%Y') if pd.notnull(row["FECHA PROMETIDA"]) else "-",
+                    "Motivo": "CANCELADA" if es_cancelado else "VENCIDA"
+                })
+
+    return {
+        "total_registros": total_registros,
+        "total_disponible": total_disponible,
+        "conteo_sc": conteo_sc,
+        "conteo_oc": conteo_oc,
+        "criticos": criticos
+    }
+
+# --- INTERFAZ GRÁFICA ---
+
+# Estilos CSS personalizados para parecerse a tu HTML original
+st.markdown("""
+    <style>
+    .big-font { font-size:20px !important; font-weight: bold; color: #1f4e79; }
+    .header-style { background-color: #1f4e79; color: white; padding: 10px; border-radius: 5px; }
+    div[data-testid="stMetricValue"] { font-size: 24px; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# Encabezado
+st.markdown('<div class="header-style"><h1>📋 Informe Ejecutivo de Control de Materiales</h1></div>', unsafe_allow_html=True)
+st.write("")
+
+# --- SIDEBAR: PANEL DE ADMINISTRACIÓN ---
 with st.sidebar:
-    st.header("Cargar Archivos")
-    file_control = st.file_uploader("1. Control de Materiales", type=['xlsx', 'csv'])
-    file_trans = st.file_uploader("2. Entradas y Salidas", type=['xlsx', 'csv'])
-
-# --- FUNCIÓN INTELIGENTE PARA ENCONTRAR ENCABEZADOS ---
-def smart_load_control(file):
-    """Lee el archivo y busca automáticamente la fila de encabezados"""
-    try:
-        # Leemos las primeras 15 filas sin asumir encabezados
-        if file.name.endswith('.csv'):
-            df_raw = pd.read_csv(file, header=None, nrows=15)
-        else:
-            df_raw = pd.read_excel(file, header=None, nrows=15)
+    st.header("⚙️ Panel de Administración")
+    
+    # Input de contraseña (replicando tu JS)
+    password = st.text_input("Clave de Administrador", type="password")
+    
+    if password == "1234":
+        st.success("🔓 Acceso Concedido")
+        st.markdown("---")
+        st.subheader("Subir Nuevo Proyecto")
         
-        # Buscamos en qué fila está la columna clave "CODIGO DE PIEZA"
-        header_row_index = -1
-        for i, row in df_raw.iterrows():
-            # Convertimos la fila a texto para buscar
-            row_text = [str(x).strip().upper() for x in row.values]
-            if "CODIGO DE PIEZA" in row_text:
-                header_row_index = i
-                break
+        nuevo_nombre = st.text_input("Nombre del Proyecto (Ej. R-1916)")
+        nuevo_archivo = st.file_uploader("Cargar Excel (.xlsx)", type=["xlsx"])
         
-        if header_row_index == -1:
-            st.error("❌ No encontré la columna 'CODIGO DE PIEZA' en las primeras 15 filas. Verifica tu archivo.")
-            return None
-
-        # Ahora recargamos el archivo saltando las filas incorrectas
-        if file.name.endswith('.csv'):
-            file.seek(0) # Regresar al inicio del archivo
-            df = pd.read_csv(file, header=header_row_index)
-        else:
-            df = pd.read_excel(file, header=header_row_index)
+        if st.button("Procesar y Guardar"):
+            if nuevo_nombre and nuevo_archivo:
+                try:
+                    df = pd.read_excel(nuevo_archivo)
+                    resumen = procesar_excel(df)
+                    
+                    nuevo_proyecto = {
+                        "id": f"proj_{datetime.datetime.now().timestamp()}",
+                        "nombre": nuevo_nombre,
+                        "resumen": resumen
+                    }
+                    
+                    st.session_state.proyectos.append(nuevo_proyecto)
+                    guardar_datos(st.session_state.proyectos) # Guardar en JSON
+                    st.success(f"Proyecto '{nuevo_nombre}' guardado éxito.")
+                    st.rerun() # Recargar para actualizar lista
+                except Exception as e:
+                    st.error(f"Error al leer el Excel: {e}")
+            else:
+                st.warning("Falta nombre o archivo.")
+        
+        st.markdown("---")
+        st.subheader("Gestionar Proyectos")
+        if st.session_state.proyectos:
+            df_proys = pd.DataFrame(st.session_state.proyectos)
+            st.dataframe(df_proys[["nombre"]], hide_index=True)
             
-        return df
-        
-    except Exception as e:
-        st.error(f"Error leyendo el archivo: {e}")
-        return None
-
-# --- PROCESAMIENTO ---
-def process_data(df_c, df_t):
-    # 1. Limpieza de nombres de columnas
-    df_c.columns = [str(c).replace('\n', ' ').strip() for c in df_c.columns]
-    df_t.columns = [str(c).strip() for c in df_t.columns]
-    
-    # 2. Verificar columnas necesarias
-    cols_necesarias = ['CODIGO DE PIEZA', 'CANT ITEM S.C.', 'CANT RECIBIDA', 'DESCRIPCION DE LA PARTIDA']
-    missing = [c for c in cols_necesarias if c not in df_c.columns]
-    
-    if missing:
-        st.error(f"⚠️ Faltan estas columnas en el archivo de Control: {missing}")
-        st.write("Columnas encontradas:", list(df_c.columns))
-        return None
-
-    # 3. Preparar Control
-    df_c_clean = df_c[cols_necesarias].copy()
-    df_c_clean['CANT ITEM S.C.'] = pd.to_numeric(df_c_clean['CANT ITEM S.C.'], errors='coerce').fillna(0)
-    
-    df_c_agg = df_c_clean.groupby('CODIGO DE PIEZA').agg({
-        'CANT ITEM S.C.': 'sum',
-        'DESCRIPCION DE LA PARTIDA': 'first'
-    }).reset_index()
-    
-    df_c_agg.rename(columns={'CANT ITEM S.C.': 'Solicitado', 'DESCRIPCION DE LA PARTIDA': 'Descripcion'}, inplace=True)
-
-    # 4. Preparar Transacciones
-    if 'TRANSACCION' not in df_t.columns or 'PIEZA' not in df_t.columns:
-         st.error("El archivo de Entradas/Salidas no tiene columnas 'TRANSACCION' o 'PIEZA'.")
-         return None
-         
-    df_t_pivot = df_t.pivot_table(index='PIEZA', columns='TRANSACCION', values='CANTIDAD', aggfunc='sum', fill_value=0).reset_index()
-    
-    if 'RECEPCIONES' not in df_t_pivot.columns: df_t_pivot['RECEPCIONES'] = 0
-    if 'DESPACHOS' not in df_t_pivot.columns: df_t_pivot['DESPACHOS'] = 0
-    
-    df_t_pivot.rename(columns={'RECEPCIONES': 'Recibido_Real', 'DESPACHOS': 'Despachado_Real'}, inplace=True)
-
-    # 5. Cruzar (Merge)
-    df_merged = pd.merge(df_c_agg, df_t_pivot, left_on='CODIGO DE PIEZA', right_on='PIEZA', how='outer')
-    df_merged.fillna(0, inplace=True)
-    
-    df_merged['Material'] = df_merged.apply(lambda x: x['CODIGO DE PIEZA'] if x['CODIGO DE PIEZA'] != 0 else x['PIEZA'], axis=1)
-    
-    # Cálculos Finales
-    df_merged['Solicitado'] = pd.to_numeric(df_merged['Solicitado'])
-    df_merged['Recibido_Real'] = pd.to_numeric(df_merged['Recibido_Real'])
-    df_merged['Despachado_Real'] = pd.to_numeric(df_merged['Despachado_Real'])
-    
-    df_merged['Pendiente_Recepcion'] = (df_merged['Solicitado'] - df_merged['Recibido_Real']).clip(lower=0)
-    df_merged['En_Inventario'] = (df_merged['Recibido_Real'] - df_merged['Despachado_Real'])
-
-    return df_merged[(df_merged['Solicitado'] > 0) | (df_merged['Recibido_Real'] > 0) | (df_merged['Despachado_Real'] > 0)]
-
-# --- EJECUCIÓN ---
-if file_control and file_trans:
-    with st.spinner('Analizando archivos...'):
-        # Cargar archivo de transacciones simple
-        if file_trans.name.endswith('.csv'):
-            df_t = pd.read_csv(file_trans)
+            if st.button("🗑️ Eliminar TODOS los proyectos", type="primary"):
+                st.session_state.proyectos = []
+                guardar_datos([])
+                st.rerun()
         else:
-            df_t = pd.read_excel(file_trans)
-
-        # Cargar archivo de control INTELIGENTE
-        df_c = smart_load_control(file_control)
-        
-        if df_c is not None:
-            df_result = process_data(df_c, df_t)
+            st.info("No hay proyectos cargados.")
             
-            if df_result is not None:
-                st.success("✅ ¡Datos cruzados correctamente!")
-                
-                # Métricas
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Items Solicitados", f"{df_result['Solicitado'].sum():,.0f}")
-                c2.metric("Pendiente por Recibir", f"{df_result['Pendiente_Recepcion'].sum():,.0f}", delta_color="inverse")
-                c3.metric("Stock Físico", f"{df_result['En_Inventario'].sum():,.0f}")
-                
-                st.divider()
-                
-                # Gráficos
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.subheader("⚠️ Faltantes (Top 10)")
-                    top_pend = df_result.sort_values('Pendiente_Recepcion', ascending=False).head(10)
-                    if not top_pend.empty:
-                        fig1 = px.bar(top_pend, x='Pendiente_Recepcion', y='Descripcion', orientation='h', color='Pendiente_Recepcion', color_continuous_scale='Reds')
-                        fig1.update_layout(yaxis={'categoryorder':'total ascending'}, showlegend=False)
-                        st.plotly_chart(fig1, use_container_width=True)
-                    else:
-                        st.info("¡Nada pendiente!")
+    else:
+        if password:
+            st.error("Clave incorrecta")
+        st.info("Introduce la clave para cargar o borrar proyectos.")
 
-                with col2:
-                    st.subheader("📦 Stock en Almacén (Top 10)")
-                    top_stock = df_result.sort_values('En_Inventario', ascending=False).head(10)
-                    if not top_stock.empty:
-                        fig2 = px.bar(top_stock, x='En_Inventario', y='Descripcion', orientation='h', color='En_Inventario', color_continuous_scale='Greens')
-                        fig2.update_layout(yaxis={'categoryorder':'total ascending'}, showlegend=False)
-                        st.plotly_chart(fig2, use_container_width=True)
-                    else:
-                        st.info("Inventario vacío.")
+# --- ZONA PÚBLICA (MAIN) ---
 
-                # Tabla
-                st.dataframe(df_result, use_container_width=True)
-                
-                # Descarga
-                csv = df_result.to_csv(index=False).encode('utf-8')
-                st.download_button("📥 Descargar CSV", csv, "reporte_materiales.csv", "text/csv")
+# Selector de Proyecto
+if not st.session_state.proyectos:
+    st.info("👋 No hay proyectos cargados. Por favor, usa el panel de administración (izquierda) para subir uno.")
+else:
+    nombres_proyectos = [p["nombre"] for p in st.session_state.proyectos]
+    seleccion = st.selectbox("📂 Seleccione un proyecto:", nombres_proyectos)
+    
+    # Buscar datos del proyecto seleccionado
+    proyecto_actual = next((p for p in st.session_state.proyectos if p["nombre"] == seleccion), None)
+    
+    if proyecto_actual:
+        r = proyecto_actual["resumen"]
+        
+        st.markdown("---")
+        st.markdown(f"<div class='big-font'>Resumen: {proyecto_actual['nombre']}</div>", unsafe_allow_html=True)
+        
+        # 1. Métricas Principales (Tarjetas)
+        col1, col2 = st.columns(2)
+        col1.metric("Total de Partidas", r["total_registros"])
+        col2.metric("Cantidad Disponible", f"{r['total_disponible']:,.2f}")
+        
+        st.markdown("---")
+        
+        # 2. Gráficos de Estatus (Reemplaza las listas de texto del HTML)
+        c1, c2 = st.columns(2)
+        
+        with c1:
+            st.subheader("Estatus S.C.")
+            if r["conteo_sc"]:
+                df_sc = pd.DataFrame(list(r["conteo_sc"].items()), columns=["Estatus", "Cantidad"])
+                st.dataframe(df_sc, use_container_width=True, hide_index=True)
+            else:
+                st.info("Sin datos de S.C.")
+
+        with c2:
+            st.subheader("Estatus O.C.")
+            if r["conteo_oc"]:
+                df_oc = pd.DataFrame(list(r["conteo_oc"].items()), columns=["Estatus", "Cantidad"])
+                st.dataframe(df_oc, use_container_width=True, hide_index=True)
+            else:
+                st.info("Sin datos de O.C.")
+
+        # 3. Materiales Críticos
+        st.markdown("---")
+        st.subheader("🚨 Materiales Críticos (Cancelados o Vencidos)")
+        
+        criticos = r["criticos"]
+        if criticos:
+            # Mostrar tabla bonita
+            st.dataframe(pd.DataFrame(criticos), use_container_width=True)
+        else:
+            st.success("✅ ¡Excelente! No se detectaron materiales críticos con la lógica actual.")
