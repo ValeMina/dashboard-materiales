@@ -28,35 +28,26 @@ def procesar_nuevo_excel(df_raw):
     df_solicitados = df_raw[pd.to_numeric(df_raw.iloc[:, 0], errors='coerce').notna()].copy()
     items_solicitados = int(len(df_solicitados))
     
-    # DEBUG: Mostrar cuántos solicitados
-    print(f"DEBUG: Items solicitados: {items_solicitados}")
-    
     # 2) Filtrar por FECHA DE LLEGADA válida (columna M, índice 12)
     df_solicitados['fecha_temp'] = pd.to_datetime(df_solicitados.iloc[:, 12], dayfirst=True, errors='coerce')
     df_tabla = df_solicitados[df_solicitados['fecha_temp'].notna()].copy()
     
-    print(f"DEBUG: Con fecha válida: {len(df_tabla)}")
-    
     if df_tabla.shape[1] <= 7:
-        return {"error": "El archivo no tiene la columna H (índice 7)."}
+        return {"error": "El archivo no tiene la columna H (índice 7) para O.C."}
     
-    # ✅ NUEVO: Detectar CÓDIGOS NUMÉRICOS (OC-123, ABC456, 12345, etc.)
+    # ✅ NUEVO FILTRO: SOLO códigos numéricos en No. O.C. (columna H, índice 7), ORDENADOS
     col_oc_raw = df_tabla.iloc[:, 7].astype(str).str.strip()
-    # Filtrar códigos que CONTENGAN al menos 3 dígitos consecutivos
     df_con_oc_numeric = df_tabla[col_oc_raw.str.contains(r'\d{3,}', regex=True, na=False)].copy()
     df_con_oc_numeric = df_con_oc_numeric.sort_values(by=df_con_oc_numeric.columns[7])
     
-    print(f"DEBUG: Con O.C. numérico: {len(df_con_oc_numeric)}")
-    print(f"DEBUG: Ejemplos O.C.: {col_oc_raw[col_oc_raw.str.contains(r'\\d{3,}', regex=True, na=False)][:5].tolist()}")
-    
-    # 4) Construir tabla_resumen
+    # Construir tabla_resumen SOLO con O.C. numéricos
     tabla_resumen = []
     for _, row in df_con_oc_numeric.iterrows():
-        sc = str(row.iloc[0]) if pd.notnull(row.iloc[0]) else ""
-        cant = str(row.iloc[3]) if pd.notnull(row.iloc[3]) else ""
-        desc = str(row.iloc[5]) if pd.notnull(row.iloc[5]) else ""
-        oc = str(row.iloc[7]) if pd.notnull(row.iloc[7]) else ""
-        fecha = str(row.iloc[12]) if pd.notnull(row.iloc[12]) else ""
+        sc = str(row.iloc[0]) if pd.notnull(row.iloc[0]) else ""      # Col A: No. S.C.
+        cant = str(row.iloc[3]) if pd.notnull(row.iloc[3]) else ""    # Col D: CANT ITEM
+        desc = str(row.iloc[5]) if pd.notnull(row.iloc[5]) else ""    # Col F: DESCRIPCION
+        oc = str(row.iloc[7]) if pd.notnull(row.iloc[7]) else ""      # Col H: No. O.C. (NUMÉRICO)
+        fecha = str(row.iloc[12]) if pd.notnull(row.iloc[12]) else "" # Col M: FECHA LLEGADA
         
         tabla_resumen.append({
             "No. S.C.": sc,
@@ -67,10 +58,12 @@ def procesar_nuevo_excel(df_raw):
             "LISTA DE PEDIDO": ""
         })
     
+    # KPIs
     items_recibidos = len(tabla_resumen)
-    items_sin_oc = items_recibidos
+    items_sin_oc = items_recibidos  # Ajustar según necesites
     avance = (items_recibidos / items_solicitados * 100) if items_solicitados > 0 else 0
     
+    # Datos originales para expander
     data_preview = df_raw.head(100).to_dict('records')
     
     return {
@@ -93,12 +86,15 @@ else:
     st.sidebar.info("Introduce la clave '1234'.")
     st.stop()
 
+# TÍTULO PRINCIPAL
 st.title("⚓ Tablero de Control Materiales R-1926")
 
+# CARGA DE ARCHIVO
 uploaded_file = st.file_uploader("📁 Sube tu Excel", type=["xlsx", "xls"])
 proyectos = cargar_datos()
 
 if uploaded_file is not None:
+    # Procesar Excel
     df_raw = pd.read_excel(uploaded_file)
     datos = procesar_nuevo_excel(df_raw)
     
@@ -106,8 +102,10 @@ if uploaded_file is not None:
         st.error(datos["error"])
         st.stop()
     
+    # NOMBRE DEL PROYECTO (de C4)
     nombre_proyecto = df_raw.iloc[3, 2] if len(df_raw) > 3 and len(df_raw.columns) > 2 else "Sin nombre"
     
+    # AGREGAR O ACTUALIZAR PROYECTO
     proyecto_existente = next((p for p in proyectos if p["nombre"] == str(nombre_proyecto)), None)
     if proyecto_existente:
         proyecto_existente.update(datos)
@@ -121,8 +119,9 @@ if uploaded_file is not None:
         })
     
     guardar_datos(proyectos)
-    st.success(f"✅ {nombre_proyecto} procesado!")
+    st.success(f"✅ {nombre_proyecto} procesado y guardado!")
     
+    # SELECCIÓN DE PROYECTO
     proyecto_seleccionado = st.selectbox(
         "📋 Selecciona proyecto:",
         ["Último cargado"] + [p["nombre"] for p in proyectos]
@@ -155,21 +154,26 @@ if uploaded_file is not None:
     
     st.write("")
     
-    # TABLA (SOLO O.C. CON NÚMEROS)
-    st.subheader("📋 Gestión de Pedidos (O.C. con código numérico)")
+    # 📋 TABLA GESTIÓN DE PEDIDOS (SOLO O.C. NUMÉRICO, ORDENADO)
+    st.subheader("📋 Gestión de Pedidos (Solo con O.C. NUMÉRICO)")
     raw_tabla = datos.get("tabla_resumen", [])
     
     if raw_tabla:
         df_tabla = pd.DataFrame(raw_tabla)
-        st.success(f"✅ Mostrando {len(df_tabla)} items con O.C. numérico")
         
+        # EDITOR (SOLO ADMIN)
         if password == "1234":
             edited_df = st.data_editor(
                 df_tabla,
-                column_config={"LISTA DE PEDIDO": st.column_config.TextColumn("LISTA DE PEDIDO", disabled=False)},
-                use_container_width=True
+                column_config={
+                    "LISTA DE PEDIDO": st.column_config.TextColumn("LISTA DE PEDIDO", disabled=False)
+                },
+                use_container_width=True,
+                hide_index=False
             )
+            
             if st.button("💾 Guardar cambios"):
+                # Actualizar proyecto en memoria
                 if proyecto_seleccionado == "Último cargado":
                     proyectos[-1]["tabla_resumen"] = edited_df.to_dict('records')
                 else:
@@ -183,8 +187,8 @@ if uploaded_file is not None:
         else:
             st.dataframe(df_tabla, use_container_width=True)
     else:
-        st.warning("❌ No hay O.C. con números (busca OC-123, ABC456, 12345, etc.)")
-        st.info("✅ Revisa el expander para ver tus datos originales")
+        st.warning("❌ No hay items con O.C. NUMÉRICO (OC-123, ABC456, 12345, etc.)")
     
-    with st.expander("🔍 Ver Datos Originales"):
+    # EXPANDER DATOS ORIGINALES
+    with st.expander("🔍 Ver Datos Originales (Solicitados)"):
         st.dataframe(pd.DataFrame(datos["data"]))
