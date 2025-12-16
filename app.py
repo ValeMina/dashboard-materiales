@@ -268,7 +268,7 @@ else:
                     st.success("Tabla guardada.")
                     st.rerun()
 
-            # SECCIÓN ADMIN: SUBIR PDFS POR No. S.C.
+                       # SECCIÓN ADMIN: SUBIR PDFS POR No. S.C.
             if es_admin:
                 st.write("---")
                 st.subheader("📁 Gestión de PDFs (Admin)")
@@ -278,4 +278,37 @@ else:
                 sc_seleccionado = st.selectbox(
                     "Selecciona No. S.C. para asignar PDF:",
                     options=scs_unicos,
-                    key=f"sc_select
+                    key=f"sc_select_{proyecto['id']}",
+                )
+
+                pdf_subido = st.file_uploader(
+                    "Sube un PDF para esta S.C.",
+                    type=["pdf"],
+                    key=f"pdf_upload_{proyecto['id']}",
+                )
+
+                if st.button("📤 Asignar PDF a todas las filas de esta S.C.", type="primary"):
+                    if pdf_subido and sc_seleccionado:
+                        pdf_nombre = f"{sc_seleccionado}_{datetime.datetime.now().timestamp()}.pdf"
+                        pdf_path = os.path.join(PDF_DIR, pdf_nombre)
+
+                        with open(pdf_path, "wb") as f:
+                            f.write(pdf_subido.getbuffer())
+
+                        tabla_actualizada = st.session_state.proyectos[indice_proyecto]["contenido"]["tabla_resumen"]
+                        for row in tabla_actualizada:
+                            if row["No. S.C."] == sc_seleccionado:
+                                row["LISTA DE PEDIDO"] = pdf_nombre
+
+                        st.session_state.proyectos[indice_proyecto]["contenido"]["tabla_resumen"] = tabla_actualizada
+                        guardar_datos(st.session_state.proyectos)
+                        st.success(f"PDF asignado a todas las filas con No. S.C. = {sc_seleccionado}")
+                        st.rerun()
+                    else:
+                        st.warning("Selecciona S.C. y sube un PDF.")
+
+        else:
+            st.warning("❌ No hay items con FECHA DE LLEGADA válida.")
+
+        with st.expander("🔍 Ver Datos Originales (Solicitados)"):
+            st.dataframe(pd.DataFrame(datos["data"]))
