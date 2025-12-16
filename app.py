@@ -12,6 +12,12 @@ from io import BytesIO
 # =========================
 st.set_page_config(page_title="TNG | Control de Materiales", layout="wide")
 
+LOGO_URL = "https://raw.githubusercontent.com/ValeMina/dashboard-materiales/7732fcbc074ef20dcd476e57cd72a9c17d7a429f/logo%20tng.png"
+
+st.set_page_config(page_title="TNG | Control de Materiales", layout="wide")
+st.logo(LOGO_URL)
+
+
 DB_FILE = "db_proyectos.json"
 ADMIN_PASS = os.getenv("ADMIN_PASS", "1234")
 PDF_DIR = "pdf_notas"
@@ -915,6 +921,7 @@ if pdfs:
     st.markdown('</div>', unsafe_allow_html=True)
 else:
     st.info("No hay PDFs disponibles. El administrador puede subirlos en su panel.")
+
 
 
 
