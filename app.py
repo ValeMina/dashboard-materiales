@@ -82,24 +82,6 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
     items_sin_oc = int(df_solicitados.iloc[:, 7].isnull().sum())
     avance = (items_recibidos / items_solicitados * 100) if items_solicitados > 0 else 0.0
 
-    # 5) Construir tabla_resumen (mismos nombres de columnas)
-    tabla_resumen = []
-    for _, row in df_tabla.iterrows():
-        sc    = str(row.iloc[0])  if pd.notnull(row.iloc[0])  else ""
-        cant  = str(row.iloc[3])  if pd.notnull(row.iloc[3])  else ""
-        desc  = str(row.iloc[5])  if pd.notnull(row.iloc[5])  else ""
-        oc    = str(row.iloc[7])  if pd.notnull(row.iloc[7])  else ""
-        fecha = str(row.iloc[12]) if pd.notnull(row.iloc[12]) else ""
-
-        tabla_resumen.append({
-            "No. S.C.": sc,
-            "CANT ITEM": cant,
-            "DESCRIPCION": desc,
-            "No. O.C.": oc,
-            "FECHA LLEGADA": fecha,
-            "LISTA DE PEDIDO": ""
-        })
-
     # Datos originales (solicitados) para un posible uso futuro
     data_preview = df_solicitados.fillna("").head(500).to_dict(orient="records")
 
@@ -110,7 +92,6 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
             "items_sin_oc": items_sin_oc,
             "avance": avance,
         },
-        "tabla_resumen": tabla_resumen,
         "data": data_preview,
         "fecha_carga": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
     }
@@ -245,46 +226,3 @@ else:
                 height=300,
             )
             st.plotly_chart(fig, use_container_width=True)
-
-        st.write("---")
-
-        # NUEVA TABLA (mismos nombres de columnas, ya filtrada por 'RE' en O)
-        st.subheader("📋 Gestión de Pedidos (filtrados por 'RE' en columna O)")
-        raw_tabla = datos.get("tabla_resumen", [])
-
-        if raw_tabla:
-            df_tabla = pd.DataFrame(raw_tabla)
-
-            st.success(f"✅ Mostrando {len(df_tabla)} items con 'RE' en columna O.")
-
-            column_config = {
-                "No. S.C.": st.column_config.TextColumn("No. S.C.", disabled=True),
-                "CANT ITEM": st.column_config.TextColumn("Cant.", disabled=True),
-                "DESCRIPCION": st.column_config.TextColumn("Descripción", disabled=True),
-                "No. O.C.": st.column_config.TextColumn("O.C.", disabled=True),
-                "FECHA LLEGADA": st.column_config.TextColumn("Fecha Llegada", disabled=True),
-                "LISTA DE PEDIDO": st.column_config.TextColumn(
-                    "📝 Lista de Pedido", disabled=not es_admin, width="medium"
-                ),
-            }
-
-            df_editado = st.data_editor(
-                df_tabla,
-                column_config=column_config,
-                use_container_width=True,
-                hide_index=True,
-                num_rows="fixed",
-                key=f"editor_{proyecto['id']}",
-            )
-
-            # Guardar tabla editada
-            if es_admin:
-                if st.button("💾 Guardar Tabla", type="primary"):
-                    st.session_state.proyectos[indice_proyecto]["contenido"][
-                        "tabla_resumen"
-                    ] = df_editado.to_dict(orient="records")
-                    guardar_datos(st.session_state.proyectos)
-                    st.success("Tabla guardada.")
-                    st.rerun()
-        else:
-            st.warning("❌ No hay items con 'RE' en columna O.")
