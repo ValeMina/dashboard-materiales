@@ -576,7 +576,7 @@ div[role="listbox"], ul[role="listbox"], div[data-baseweb="menu"]{
 /* Texto dentro del dropdown */
 div[data-baseweb="menu"] * ,
 div[role="listbox"] li * , ul[role="listbox"] li *{
-  color: #0F172A !important;
+  color: #FFFFFF !important;
 }
 
 /* Hover */
@@ -924,6 +924,7 @@ if pdfs:
     st.markdown('</div>', unsafe_allow_html=True)
 else:
     st.info("No hay PDFs disponibles. El administrador puede subirlos en su panel.")
+
 
 
 
