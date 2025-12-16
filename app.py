@@ -102,7 +102,7 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
 # --- UI PRINCIPAL ---
 st.markdown(
     """
-    <h1 style='text-align: center;'>⚓ Dashboard: R-1926 MONFORTE DE LEMOS</h1>
+    <h1 style='text-align: center;'>⚓ Dashboard: CONTROL DE MATERIALES</h1>
     <p style='text-align: center;'>Sistema de Control de Materiales</p>
     """,
     unsafe_allow_html=True,
@@ -304,3 +304,4 @@ else:
 
         with st.expander("🔍 Ver Datos Originales (Solicitados)"):
             st.dataframe(pd.DataFrame(datos["data"]))
+
