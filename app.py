@@ -14,6 +14,23 @@ PDF_DIR = "pdfs_listas_pedido"
 # Crear directorio de PDFs si no existe
 os.makedirs(PDF_DIR, exist_ok=True)
 
+# --- LOGO Y TÍTULO ---
+LOGO_URL = "https://github.com/ValeMina/dashboard-materiales/raw/8393550c123ddae68f49987994c72395e0339e67/logo%20tng.png"
+
+col_logo, col_titulo = st.columns([1, 3])
+with col_logo:
+    st.image(LOGO_URL, use_column_width=True)
+with col_titulo:
+    st.markdown(
+        """
+        <h1 style='text-align: left; margin-bottom: 0;'>⚓ Dashboard: CONTROL DE MATERIALES</h1>
+        <p style='text-align: left; margin-top: 0;'>Sistema de Control de Materiales</p>
+        """,
+        unsafe_allow_html=True,
+    )
+
+st.write("---")
+
 # --- PERSISTENCIA ---
 def cargar_datos():
     if os.path.exists(DB_FILE):
@@ -100,15 +117,6 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
     }
 
 # --- UI PRINCIPAL ---
-st.markdown(
-    """
-    <h1 style='text-align: center;'>⚓ Dashboard: CONTROL DE MATERIALES</h1>
-    <p style='text-align: center;'>Sistema de Control de Materiales</p>
-    """,
-    unsafe_allow_html=True,
-)
-st.write("---")
-
 es_admin = False
 
 # --- SIDEBAR ---
@@ -270,38 +278,4 @@ else:
                 sc_seleccionado = st.selectbox(
                     "Selecciona No. S.C. para asignar PDF:",
                     options=scs_unicos,
-                    key=f"sc_select_{proyecto['id']}",
-                )
-
-                pdf_subido = st.file_uploader(
-                    "Sube un PDF para esta S.C.",
-                    type=["pdf"],
-                    key=f"pdf_upload_{proyecto['id']}",
-                )
-
-                if st.button("📤 Asignar PDF a todas las filas de esta S.C.", type="primary"):
-                    if pdf_subido and sc_seleccionado:
-                        pdf_nombre = f"{sc_seleccionado}_{datetime.datetime.now().timestamp()}.pdf"
-                        pdf_path = os.path.join(PDF_DIR, pdf_nombre)
-
-                        with open(pdf_path, "wb") as f:
-                            f.write(pdf_subido.getbuffer())
-
-                        tabla_actualizada = st.session_state.proyectos[indice_proyecto]["contenido"]["tabla_resumen"]
-                        for row in tabla_actualizada:
-                            if row["No. S.C."] == sc_seleccionado:
-                                row["LISTA DE PEDIDO"] = pdf_nombre
-
-                        st.session_state.proyectos[indice_proyecto]["contenido"]["tabla_resumen"] = tabla_actualizada
-                        guardar_datos(st.session_state.proyectos)
-                        st.success(f"PDF asignado a todas las filas con No. S.C. = {sc_seleccionado}")
-                        st.rerun()
-                    else:
-                        st.warning("Selecciona S.C. y sube un PDF.")
-
-        else:
-            st.warning("❌ No hay items con FECHA DE LLEGADA válida.")
-
-        with st.expander("🔍 Ver Datos Originales (Solicitados)"):
-            st.dataframe(pd.DataFrame(datos["data"]))
-
+                    key=f"sc_select
