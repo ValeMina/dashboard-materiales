@@ -82,6 +82,25 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
     items_sin_oc = int(df_solicitados.iloc[:, 7].isnull().sum())
     avance = (items_recibidos / items_solicitados * 100) if items_solicitados > 0 else 0.0
 
+    # 5) Construir tabla_resumen con las columnas solicitadas
+    tabla_resumen = []
+    for _, row in df_tabla.iterrows():
+        sc    = str(row.iloc[0])  if pd.notnull(row.iloc[0])  else ""
+        cant  = str(row.iloc[3])  if pd.notnull(row.iloc[3])  else ""
+        desc  = str(row.iloc[5])  if pd.notnull(row.iloc[5])  else ""
+        oc    = str(row.iloc[7])  if pd.notnull(row.iloc[7])  else ""
+        fecha = str(row.iloc[12]) if pd.notnull(row.iloc[12]) else ""
+        estatus = str(row.iloc[14]) if pd.notnull(row.iloc[14]) else ""
+
+        tabla_resumen.append({
+            "No. S.C.": sc,
+            "CANT ITEM": cant,
+            "DESCRIPCION": desc,
+            "No. O.C.": oc,
+            "FECHA LLEGADA": fecha,
+            "ESTATUS": estatus
+        })
+
     # Datos originales (solicitados) para un posible uso futuro
     data_preview = df_solicitados.fillna("").head(500).to_dict(orient="records")
 
@@ -92,6 +111,7 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
             "items_sin_oc": items_sin_oc,
             "avance": avance,
         },
+        "tabla_resumen": tabla_resumen,
         "data": data_preview,
         "fecha_carga": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
     }
@@ -226,3 +246,22 @@ else:
                 height=300,
             )
             st.plotly_chart(fig, use_container_width=True)
+
+        st.write("---")
+
+        # TABLA CON COLUMNAS SOLICITADAS (filtradas por 'RE' en columna O)
+        st.subheader("📋 Items Recibidos (con 'RE' en columna O)")
+        raw_tabla = datos.get("tabla_resumen", [])
+
+        if raw_tabla:
+            df_tabla = pd.DataFrame(raw_tabla)
+
+            st.success(f"✅ Mostrando {len(df_tabla)} items con 'RE' en columna O.")
+
+            st.dataframe(
+                df_tabla,
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.warning("❌ No hay items con 'RE' en columna O.")
