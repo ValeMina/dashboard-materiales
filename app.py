@@ -63,6 +63,45 @@ def guardar_datos(lista_proyectos):
 if "proyectos" not in st.session_state:
     st.session_state.proyectos = cargar_datos()
 
+# --- FUNCIÓN: ITEMS SIN OC DESDE EXCEL ORIGINAL ---
+def calcular_items_sin_oc_desde_excel(df_raw: pd.DataFrame) -> int:
+    """
+    Cuenta items SIN OC usando SOLO el archivo original:
+    - Filas con cantidad en D
+    - Excluye 'SERVICIO' en F
+    - Examina H:
+      * Si H NO es numérico -> SIN OC
+    - Cuenta No. S.C. únicos para evitar duplicados.
+    """
+    # Filas con cantidad (D no nulo)
+    df_solicitados = df_raw[df_raw.iloc[:, 3].notna()].copy()
+
+    # Columna F para excluir SERVICIO
+    col_desc = df_solicitados.iloc[:, 5].astype(str).str.upper()
+
+    # Solo materiales (sin 'SERVICIO')
+    df_materiales = df_solicitados[~col_desc.str.contains("SERVICIO", na=False)].copy()
+    if df_materiales.empty:
+        return 0
+
+    # Columna H original (índice 7) y No. S.C. en A (índice 0)
+    col_h = df_materiales.iloc[:, 7]
+    col_sc = df_materiales.iloc[:, 0].astype(str)
+
+    # Convertir H a numérico: números válidos se quedan, lo demás → NaN
+    col_h_num = pd.to_numeric(col_h, errors="coerce")
+
+    # Filas SIN OC = H no numérico
+    mask_sin_oc = col_h_num.isna()
+
+    df_sin_oc = df_materiales[mask_sin_oc].copy()
+    df_sin_oc["No. S.C."] = col_sc[mask_sin_oc]
+
+    # Contar No. S.C. únicos sin OC
+    items_sin_oc = df_sin_oc["No. S.C."].nunique()
+
+    return int(items_sin_oc)
+
 # --- PROCESAR EXCEL ---
 def procesar_nuevo_excel(df_raw: pd.DataFrame):
     """
@@ -95,11 +134,8 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
     # 3) Items recibidos (con 'RE' en O y sin 'SERVICIO' en F)
     items_recibidos = len(df_tabla)
 
-    # 4) Items sin OC tomando la columna H ORIGINAL y solo materiales (sin SERVICIO)
-    df_sin_servicio = df_solicitados[~col_desc.str.contains("SERVICIO", na=False)].copy()
-    col_h = df_sin_servicio.iloc[:, 7]  # columna H original
-    col_h_num = pd.to_numeric(col_h, errors="coerce")  # números válidos; lo demás → NaN
-    items_sin_oc = int(col_h_num.isna().sum())
+    # 4) Items sin OC calculados desde el EXCEL original, sin duplicar No. S.C.
+    items_sin_oc = calcular_items_sin_oc_desde_excel(df_raw)
 
     # 5) Avance global
     avance = (items_recibidos / items_solicitados * 100) if items_solicitados > 0 else 0.0
