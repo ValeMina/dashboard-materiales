@@ -43,7 +43,6 @@ def get_download_link(nombre_pdf):
     if nombre_pdf and os.path.exists(os.path.join(PDF_DIR, nombre_pdf)):
         with open(os.path.join(PDF_DIR, nombre_pdf), "rb") as f:
             b64 = base64.b64encode(f.read()).decode()
-        # enlace tipo data:; no todos los navegadores lo soportan perfecto, pero evita exponer rutas.[web:16]
         return f"[📥 Descargar](data:application/pdf;base64,{b64})"
     return "❌ Sin LP Asignada"
 
@@ -77,11 +76,11 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
     if df_raw.shape[1] < 15:
         return {"error": "El archivo no tiene suficientes columnas (mínimo hasta la O)."}
 
-    df_solicitados = df_raw[df_raw.iloc[:, 3].notna()].copy()  # D no nulo
+    df_solicitados = df_raw[df_raw.iloc[:, 3].notna()].copy()
     items_solicitados = int(len(df_solicitados))
 
-    col_o = df_solicitados.iloc[:, 14].astype(str).str.upper()   # O
-    col_desc = df_solicitados.iloc[:, 5].astype(str).str.upper() # F
+    col_o = df_solicitados.iloc[:, 14].astype(str).str.upper()
+    col_desc = df_solicitados.iloc[:, 5].astype(str).str.upper()
 
     mask_re = col_o.str.contains("RE", na=False)
     mask_no_servicio = ~col_desc.str.contains("SERVICIO", na=False)
@@ -111,7 +110,7 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
             "DESCRIPCION": desc,
             "No. O.C.": oc,
             "FECHA LLEGADA": fecha,
-            "LISTA DE PEDIDO": "",   # aquí se guarda el nombre del PDF
+            "LISTA DE PEDIDO": "",   # nombre de PDF
             "ESTATUS": estatus,
             "_row_index": int(idx),
         })
@@ -257,8 +256,8 @@ else:
             text_auto=True,
             color_discrete_map={
                 "Solicitados": "#3498db",
-                "Con 'RE' (sin SERVICIOS)": "#2ecc71",
-                "Sin OC (sin SERVICIOS)": "#e74c3c",
+                "Recibidos": "#2ecc71",
+                "Sin OC": "#e74c3c",
             },
             height=300,
         )
@@ -272,7 +271,7 @@ else:
     if raw_tabla:
         df_tabla = pd.DataFrame(raw_tabla)
 
-        # Copia para mostrar con enlaces
+        # Copia para mostrar con texto/enlace
         df_mostrar = df_tabla.copy()
         for idx, row in df_mostrar.iterrows():
             nombre_pdf = row.get("LISTA DE PEDIDO", "")
@@ -297,45 +296,5 @@ else:
             hide_index=True,
         )
 
-        # --- PANEL ADMIN PARA ASIGNAR PDF A FILA ---
-        if es_admin:
-            st.markdown("---")
-            st.subheader("👨‍💼 ADMIN: Asignar PDF a una fila")
-
-            fila_seleccionada = st.selectbox(
-                "📍 Selecciona la fila donde guardar el PDF:",
-                options=df_tabla.index.tolist(),
-                format_func=lambda x: f"Fila {x+1}: {df_tabla.iloc[x]['No. S.C.']} - {df_tabla.iloc[x]['DESCRIPCION'][:50]}...",
-            )
-
-            col1, col2 = st.columns(2)
-            with col1:
-                pdf_subido = st.file_uploader(
-                    "📎 Subir PDF", type="pdf", key=f"pdf_uploader_{fila_seleccionada}"
-                )
-            with col2:
-                nombre_pdf = st.text_input(
-                    "📝 Nombre del PDF:",
-                    value=f"SC_{df_tabla.iloc[fila_seleccionada]['No. S.C.']}_{proyecto['nombre']}.pdf",
-                    key=f"pdf_name_{fila_seleccionada}",
-                )
-
-            if st.button(
-                f"💾 Guardar PDF en Fila {fila_seleccionada + 1}",
-                type="primary",
-                key=f"btn_guardar_pdf_{fila_seleccionada}",
-            ):
-                if pdf_subido:
-                    nombre_archivo_guardado = guardar_pdf(nombre_pdf, pdf_subido.getvalue())
-                    df_tabla.at[fila_seleccionada, "LISTA DE PEDIDO"] = nombre_archivo_guardado
-                    st.session_state.proyectos[indice_proyecto]["contenido"]["tabla_resumen"] = (
-                        df_tabla.to_dict(orient="records")
-                    )
-                    guardar_datos(st.session_state.proyectos)
-                    st.success(f"✅ PDF guardado en Fila {fila_seleccionada + 1}")
-                    st.rerun()
-                else:
-                    st.error("❌ Selecciona un PDF primero")
     else:
         st.warning("❌ No hay items válidos.")
-
