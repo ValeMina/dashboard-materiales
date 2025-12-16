@@ -95,9 +95,11 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
     # 3) Items recibidos (con 'RE' en O y sin 'SERVICIO' en F)
     items_recibidos = len(df_tabla)
 
-    # 4) Items sin OC (excluyendo servicios) → igual que en tu código de referencia
-    df_sin_servicio = df_solicitados[~col_desc.str.contains("SERVICIO", na=False)]
-    items_sin_oc = int(df_sin_servicio.iloc[:, 7].isnull().sum())
+    # 4) Items sin OC tomando la columna H ORIGINAL y solo materiales (sin SERVICIO)
+    df_sin_servicio = df_solicitados[~col_desc.str.contains("SERVICIO", na=False)].copy()
+    col_h = df_sin_servicio.iloc[:, 7]  # columna H original
+    col_h_num = pd.to_numeric(col_h, errors="coerce")  # números válidos; lo demás → NaN
+    items_sin_oc = int(col_h_num.isna().sum())
 
     # 5) Avance global
     avance = (items_recibidos / items_solicitados * 100) if items_solicitados > 0 else 0.0
