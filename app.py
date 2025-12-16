@@ -76,31 +76,32 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
     if df_raw.shape[1] < 15:
         return {"error": "El archivo no tiene suficientes columnas (mínimo hasta la O)."}
 
-    # Filas con cantidad (todos los solicitados)
+    # 1) Todos los items solicitados (D no nulo)
     df_solicitados = df_raw[df_raw.iloc[:, 3].notna()].copy()
     items_solicitados = int(len(df_solicitados))
 
-    col_o = df_solicitados.iloc[:, 14].astype(str).str.upper()   # O
-    col_desc = df_solicitados.iloc[:, 5].astype(str).str.upper() # F
+    # Columnas para filtros
+    col_o = df_solicitados.iloc[:, 14].astype(str).str.upper()   # O = estatus
+    col_desc = df_solicitados.iloc[:, 5].astype(str).str.upper() # F = descripción
 
-    # Filtro: RE en O y NO SERVICIO en F
+    # 2) Filtro: RE en O y NO "SERVICIO" en F
     mask_re = col_o.str.contains("RE", na=False)
     mask_no_servicio = ~col_desc.str.contains("SERVICIO", na=False)
-
     df_tabla = df_solicitados[mask_re & mask_no_servicio].copy()
+
     if df_tabla.empty:
         return {"error": "No hay filas con 'RE' en O y sin 'SERVICIO' en F."}
 
-    # Items recibidos = filtrados por RE y sin servicio
+    # 3) Items recibidos (materiales con RE)
     items_recibidos = len(df_tabla)
 
-    # Items sin OC SOBRE TODOS LOS SOLICITADOS (incluyendo servicios)
+    # 4) Items sin OC SOBRE TODOS LOS SOLICITADOS (columna H nula)
     items_sin_oc = int(df_solicitados.iloc[:, 7].isnull().sum())
 
-    # Avance = recibidos / solicitados
+    # 5) Avance global
     avance = (items_recibidos / items_solicitados * 100) if items_solicitados > 0 else 0.0
 
-    # Tabla resumen (solo materiales, sin servicios)
+    # 6) Tabla resumen (solo materiales, sin servicios)
     tabla_resumen = []
     for idx, row in df_tabla.iterrows():
         sc = str(row.iloc[0]) if pd.notnull(row.iloc[0]) else ""
@@ -277,7 +278,7 @@ else:
     if raw_tabla:
         df_tabla = pd.DataFrame(raw_tabla)
 
-        # Para visualización inicial: mostrar texto existente o mensaje por defecto
+        # Para visualización: mostrar texto existente o mensaje por defecto
         df_mostrar = df_tabla.copy()
         for idx, row in df_mostrar.iterrows():
             nombre_lp = row.get("LISTA DE PEDIDO", "")
@@ -311,7 +312,6 @@ else:
 
         if es_admin:
             if st.button("💾 Guardar cambios en Lista de Pedido", type="primary"):
-                # Guardar solo el texto de LISTA DE PEDIDO en la tabla original
                 df_tabla["LISTA DE PEDIDO"] = df_editado["LISTA DE PEDIDO"]
                 st.session_state.proyectos[indice_proyecto]["contenido"]["tabla_resumen"] = (
                     df_tabla.to_dict(orient="records")
