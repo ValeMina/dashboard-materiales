@@ -65,15 +65,25 @@ if "proyectos" not in st.session_state:
 
 # --- PROCESAR EXCEL ---
 def procesar_nuevo_excel(df_raw: pd.DataFrame):
+    """
+    Filtra:
+    - Columna O contiene 'RE'
+    - Columna F (DESCRIPCION) NO contiene 'SERVICIO'
+    Devuelve tabla con:
+    A: No. S.C., D: CANT ITEM, F: DESCRIPCION, H: No. O.C.,
+    M: FECHA LLEGADA, LISTA DE PEDIDO (texto editable), O: ESTATUS.
+    """
     if df_raw.shape[1] < 15:
         return {"error": "El archivo no tiene suficientes columnas (mínimo hasta la O)."}
 
+    # Filas con cantidad (todos los solicitados)
     df_solicitados = df_raw[df_raw.iloc[:, 3].notna()].copy()
     items_solicitados = int(len(df_solicitados))
 
-    col_o = df_solicitados.iloc[:, 14].astype(str).str.upper()
-    col_desc = df_solicitados.iloc[:, 5].astype(str).str.upper()
+    col_o = df_solicitados.iloc[:, 14].astype(str).str.upper()   # O
+    col_desc = df_solicitados.iloc[:, 5].astype(str).str.upper() # F
 
+    # Filtro: RE en O y NO SERVICIO en F
     mask_re = col_o.str.contains("RE", na=False)
     mask_no_servicio = ~col_desc.str.contains("SERVICIO", na=False)
 
@@ -81,11 +91,16 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
     if df_tabla.empty:
         return {"error": "No hay filas con 'RE' en O y sin 'SERVICIO' en F."}
 
+    # Items recibidos = filtrados por RE y sin servicio
     items_recibidos = len(df_tabla)
-    df_sin_servicio = df_solicitados[~col_desc.str.contains("SERVICIO", na=False)]
-    items_sin_oc = int(df_sin_servicio.iloc[:, 7].isnull().sum())
+
+    # Items sin OC SOBRE TODOS LOS SOLICITADOS (incluyendo servicios)
+    items_sin_oc = int(df_solicitados.iloc[:, 7].isnull().sum())
+
+    # Avance = recibidos / solicitados
     avance = (items_recibidos / items_solicitados * 100) if items_solicitados > 0 else 0.0
 
+    # Tabla resumen (solo materiales, sin servicios)
     tabla_resumen = []
     for idx, row in df_tabla.iterrows():
         sc = str(row.iloc[0]) if pd.notnull(row.iloc[0]) else ""
@@ -262,7 +277,7 @@ else:
     if raw_tabla:
         df_tabla = pd.DataFrame(raw_tabla)
 
-        # Para visualización pública, convertir a texto / enlace
+        # Para visualización inicial: mostrar texto existente o mensaje por defecto
         df_mostrar = df_tabla.copy()
         for idx, row in df_mostrar.iterrows():
             nombre_lp = row.get("LISTA DE PEDIDO", "")
@@ -280,12 +295,11 @@ else:
             "FECHA LLEGADA": st.column_config.TextColumn("Fecha Llegada", disabled=True),
             "LISTA DE PEDIDO": st.column_config.TextColumn(
                 "📋 Lista de Pedido",
-                disabled=not es_admin,   # editable SOLO si eres admin
+                disabled=not es_admin,   # editable solo para admin
             ),
             "ESTATUS": st.column_config.TextColumn("Estatus", disabled=True),
         }
 
-        # Editor solo para admin (o modo solo lectura para público)
         df_editado = st.data_editor(
             df_mostrar.drop(columns=["_row_index"]),
             column_config=column_config,
@@ -297,7 +311,7 @@ else:
 
         if es_admin:
             if st.button("💾 Guardar cambios en Lista de Pedido", type="primary"):
-                # Volcar cambios de LISTA DE PEDIDO a la tabla original
+                # Guardar solo el texto de LISTA DE PEDIDO en la tabla original
                 df_tabla["LISTA DE PEDIDO"] = df_editado["LISTA DE PEDIDO"]
                 st.session_state.proyectos[indice_proyecto]["contenido"]["tabla_resumen"] = (
                     df_tabla.to_dict(orient="records")
