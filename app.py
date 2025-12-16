@@ -80,7 +80,7 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
     items_recibidos = len(df_tabla)
 
     # 4) Otros KPIs (sobre solicitados)
-    items_sin_oc = int(df_solicitados.iloc[:, 7].isnull().sum())  # No. O.C. (col H, índice 7)
+    items_sin_oc = int(df_solicitados.iloc[:, 7].isnull().sum())
     avance = (items_recibidos / items_solicitados * 100) if items_solicitados > 0 else 0.0
 
     # 5) Construir tabla_resumen
@@ -101,7 +101,6 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
             "LISTA DE PEDIDO": ""
         })
 
-    # Datos originales (solicitados) para el expander
     data_preview = df_solicitados.fillna("").head(500).to_dict(orient="records")
 
     return {
@@ -129,9 +128,9 @@ with st.sidebar:
         st.success("🔓 Modo Editor Activo")
         st.markdown("---")
 
-               st.subheader("📤 Subir Nuevos Proyectos")
+        # --- SUBIR NUEVOS PROYECTOS (MÚLTIPLES ARCHIVOS, NOMBRE DESDE C4) ---
+        st.subheader("📤 Subir Nuevos Proyectos")
 
-        # Ahora acepta múltiples archivos
         archivos_subidos = st.file_uploader(
             "Archivos Excel/CSV",
             type=["xlsx", "xls", "csv"],
@@ -142,19 +141,21 @@ with st.sidebar:
             if archivos_subidos:
                 for archivo_subido in archivos_subidos:
                     try:
-                        # Leer archivo
+                        # Leer archivo completo para obtener C4 y luego los datos
                         if archivo_subido.name.endswith(".csv"):
                             df = pd.read_csv(archivo_subido, header=5)
+                            archivo_subido.seek(0)
                             df_nombre = pd.read_csv(archivo_subido, header=None)
                         else:
                             df = pd.read_excel(archivo_subido, header=5)
+                            archivo_subido.seek(0)
                             df_nombre = pd.read_excel(archivo_subido, header=None)
 
-                        # Tomar nombre desde celda C4 (fila 3, columna 2, índice 0‑based)
+                        # Nombre desde celda C4 (fila 3, columna 2; índice base 0)
                         try:
                             nombre_proyecto = str(df_nombre.iloc[3, 2]).strip()
                         except Exception:
-                            nombre_proyecto = archivo_subido.name  # respaldo
+                            nombre_proyecto = archivo_subido.name
 
                         if not nombre_proyecto:
                             nombre_proyecto = archivo_subido.name
@@ -178,41 +179,14 @@ with st.sidebar:
             else:
                 st.warning("No se seleccionaron archivos.")
 
-
-        if st.button("Procesar y Guardar"):
-            if nombre_proyecto and archivo_subido:
-                try:
-                    if archivo_subido.name.endswith(".csv"):
-                        df = pd.read_csv(archivo_subido, header=5)
-                    else:
-                        df = pd.read_excel(archivo_subido, header=5)
-
-                    resultado = procesar_nuevo_excel(df)
-
-                    if "error" in resultado:
-                        st.error(resultado["error"])
-                    else:
-                        nuevo_registro = {
-                            "id": f"rep_{datetime.datetime.now().timestamp()}",
-                            "nombre": nombre_proyecto,
-                            "contenido": resultado,
-                        }
-                        st.session_state.proyectos.append(nuevo_registro)
-                        guardar_datos(st.session_state.proyectos)
-                        st.success(f"Reporte '{nombre_proyecto}' guardado con éxito.")
-                        st.rerun()
-                except Exception as e:
-                    st.error(f"Error crítico: {e}")
-            else:
-                st.warning("Falta nombre o archivo.")
-
         st.markdown("---")
         if st.button("🗑️ Borrar Todo"):
             st.session_state.proyectos = []
             guardar_datos([])
             st.rerun()
     else:
-        st.info("Introduce la clave de acceso.")
+        # Puedes dejarlo vacío o mostrar otro mensaje
+        pass
 
 # --- CONTENIDO PRINCIPAL ---
 if not st.session_state.proyectos:
@@ -314,7 +288,7 @@ else:
                     st.success("Tabla guardada.")
                     st.rerun()
 
-                       # SECCIÓN ADMIN: SUBIR PDFS POR No. S.C.
+            # SECCIÓN ADMIN: SUBIR PDFS POR No. S.C.
             if es_admin:
                 st.write("---")
                 st.subheader("📁 Gestión de PDFs (Admin)")
@@ -358,5 +332,3 @@ else:
 
         with st.expander("🔍 Ver Datos Originales (Solicitados)"):
             st.dataframe(pd.DataFrame(datos["data"]))
-
-
