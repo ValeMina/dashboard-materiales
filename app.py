@@ -34,17 +34,16 @@ st.write("---")
 
 # --- FUNCIONES PARA PDFs ---
 def guardar_pdf(nombre_pdf, contenido_pdf):
-    """Guarda PDF en disco y retorna nombre del archivo"""
     ruta_pdf = os.path.join(PDF_DIR, nombre_pdf)
     with open(ruta_pdf, "wb") as f:
         f.write(contenido_pdf)
     return nombre_pdf
 
 def get_download_link(nombre_pdf):
-    """Genera enlace de descarga para PDF"""
     if nombre_pdf and os.path.exists(os.path.join(PDF_DIR, nombre_pdf)):
         with open(os.path.join(PDF_DIR, nombre_pdf), "rb") as f:
             b64 = base64.b64encode(f.read()).decode()
+        # enlace tipo data:; no todos los navegadores lo soportan perfecto, pero evita exponer rutas.[web:16]
         return f"[📥 Descargar](data:application/pdf;base64,{b64})"
     return "❌ Sin PDF"
 
@@ -65,24 +64,20 @@ def guardar_datos(lista_proyectos):
 if "proyectos" not in st.session_state:
     st.session_state.proyectos = cargar_datos()
 
-# --- PROCESAMIENTO DEL EXCEL ---
+# --- PROCESAR EXCEL ---
 def procesar_nuevo_excel(df_raw: pd.DataFrame):
     """
-    Tabla basada en filtro de columna O que contenga 'RE'
-    y columna F (DESCRIPCION) NO contenga 'SERVICIO'.
-    Columnas usadas por índice:
-    - 0 (A): No. S.C.
-    - 3 (D): CANT ITEM S.C.
-    - 5 (F): DESCRIPCION DE LA PARTIDA
-    - 7 (H): No. O.C.
-    - 12 (M): FECHA DE LLEGADA
-    - 14 (O): ESTATUS
+    Filtra:
+    - Columna O contiene 'RE'
+    - Columna F (DESCRIPCION) NO contiene 'SERVICIO'
+    Devuelve tabla con:
+    A: No. S.C., D: CANT ITEM, F: DESCRIPCION, H: No. O.C.,
+    M: FECHA LLEGADA, LISTA DE PEDIDO (vacía), O: ESTATUS.
     """
     if df_raw.shape[1] < 15:
         return {"error": "El archivo no tiene suficientes columnas (mínimo hasta la O)."}
 
-    # Filas con cantidad
-    df_solicitados = df_raw[df_raw.iloc[:, 3].notna()].copy()
+    df_solicitados = df_raw[df_raw.iloc[:, 3].notna()].copy()  # D no nulo
     items_solicitados = int(len(df_solicitados))
 
     col_o = df_solicitados.iloc[:, 14].astype(str).str.upper()   # O
@@ -116,7 +111,7 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
             "DESCRIPCION": desc,
             "No. O.C.": oc,
             "FECHA LLEGADA": fecha,
-            "LISTA DE PEDIDO": "",   # nombre de archivo PDF
+            "LISTA DE PEDIDO": "",   # aquí se guarda el nombre del PDF
             "ESTATUS": estatus,
             "_row_index": int(idx),
         })
@@ -135,7 +130,7 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
         "fecha_carga": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
     }
 
-# --- REGENERAR TABLAS ---
+# --- REGENERAR EXISTENTES ---
 def regenerar_tablas_existentes():
     if st.session_state.proyectos:
         with st.spinner("🔄 Regenerando tablas..."):
@@ -149,9 +144,8 @@ def regenerar_tablas_existentes():
         st.success("✅ Tablas regeneradas.")
         st.rerun()
 
-# --- UI PRINCIPAL ---
+# --- SIDEBAR / ADMIN ---
 es_admin = False
-
 with st.sidebar:
     st.header("⚙️ Panel de Administración")
     password = st.text_input("Clave de Acceso", type="password")
@@ -185,7 +179,7 @@ with st.sidebar:
 
                         try:
                             nombre_proyecto = str(df_nombre.iloc[3, 2]).strip()
-                        except:
+                        except Exception:
                             nombre_proyecto = archivo_subido.name
 
                         if not nombre_proyecto:
@@ -227,121 +221,120 @@ else:
     )
     proyecto = st.session_state.proyectos[indice_proyecto]
 
-    if proyecto:
-        datos = proyecto["contenido"]
-        kpis = datos["kpis"]
+    datos = proyecto["contenido"]
+    kpis = datos["kpis"]
 
-        st.markdown(f"### Reporte: {proyecto['nombre']} (Cargado: {datos['fecha_carga']})")
+    st.markdown(f"### Reporte: {proyecto['nombre']} (Cargado: {datos['fecha_carga']})")
 
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            st.metric("Items Solicitados", kpis["items_requisitados"])
-        with c2:
-            st.metric("Items con 'RE' (sin SERVICIOS)", kpis["items_recibidos"])
-        with c3:
-            st.metric("Items sin OC (sin SERVICIOS)", kpis["items_sin_oc"])
-        with c4:
-            st.metric("Avance", f"{kpis['avance']:.1f}%")
-        st.write("---")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("Items Solicitados", kpis["items_requisitados"])
+    with c2:
+        st.metric("Items con 'RE' (sin SERVICIOS)", kpis["items_recibidos"])
+    with c3:
+        st.metric("Items sin OC (sin SERVICIOS)", kpis["items_sin_oc"])
+    with c4:
+        st.metric("Avance", f"{kpis['avance']:.1f}%")
+    st.write("---")
 
-        col_graf, _ = st.columns([1, 0.1])
-        with col_graf:
-            df_graf = pd.DataFrame(
-                {
-                    "Estado": ["Solicitados", "Con 'RE' (sin SERVICIOS)", "Sin OC (sin SERVICIOS)"],
-                    "Cantidad": [
-                        kpis["items_requisitados"],
-                        kpis["items_recibidos"],
-                        kpis["items_sin_oc"],
-                    ],
-                }
-            )
-            fig = px.bar(
-                df_graf,
-                x="Estado",
-                y="Cantidad",
-                color="Estado",
-                text_auto=True,
-                color_discrete_map={
-                    "Solicitados": "#3498db",
-                    "Con 'RE' (sin SERVICIOS)": "#2ecc71",
-                    "Sin OC (sin SERVICIOS)": "#e74c3c",
-                },
-                height=300,
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-        st.write("---")
-
-        st.subheader("📋 Items con 'RE' en O (SERVICIOS excluidos)")
-        raw_tabla = datos.get("tabla_resumen", [])
-
-        if raw_tabla:
-            df_tabla = pd.DataFrame(raw_tabla)
-
-            # Convertir LISTA DE PEDIDO a enlaces de descarga para el público
-            df_mostrar = df_tabla.copy()
-            for idx, row in df_mostrar.iterrows():
-                nombre_pdf = row.get("LISTA DE PEDIDO", "")
-                df_mostrar.at[idx, "LISTA DE PEDIDO"] = get_download_link(nombre_pdf)
-
-            column_config = {
-                "No. S.C.": st.column_config.TextColumn("No. S.C.", disabled=True),
-                "CANT ITEM": st.column_config.TextColumn("Cant.", disabled=True),
-                "DESCRIPCION": st.column_config.TextColumn("Descripción", width="medium", disabled=True),
-                "No. O.C.": st.column_config.TextColumn("O.C.", disabled=True),
-                "FECHA LLEGADA": st.column_config.TextColumn("Fecha Llegada", disabled=True),
-                "LISTA DE PEDIDO": st.column_config.MarkdownColumn(
-                    "📋 Lista de Pedido", disabled=True
-                ),
-                "ESTATUS": st.column_config.TextColumn("Estatus", disabled=True),
+    col_graf, _ = st.columns([1, 0.1])
+    with col_graf:
+        df_graf = pd.DataFrame(
+            {
+                "Estado": ["Solicitados", "Con 'RE' (sin SERVICIOS)", "Sin OC (sin SERVICIOS)"],
+                "Cantidad": [
+                    kpis["items_requisitados"],
+                    kpis["items_recibidos"],
+                    kpis["items_sin_oc"],
+                ],
             }
+        )
+        fig = px.bar(
+            df_graf,
+            x="Estado",
+            y="Cantidad",
+            color="Estado",
+            text_auto=True,
+            color_discrete_map={
+                "Solicitados": "#3498db",
+                "Con 'RE' (sin SERVICIOS)": "#2ecc71",
+                "Sin OC (sin SERVICIOS)": "#e74c3c",
+            },
+            height=300,
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
-            st.dataframe(
-                df_mostrar.drop(columns=["_row_index"]),
-                column_config=column_config,
-                use_container_width=True,
-                hide_index=True,
+    st.write("---")
+
+    st.subheader("📋 Items con 'RE' en O (SERVICIOS excluidos)")
+    raw_tabla = datos.get("tabla_resumen", [])
+
+    if raw_tabla:
+        df_tabla = pd.DataFrame(raw_tabla)
+
+        # Copia para mostrar con enlaces
+        df_mostrar = df_tabla.copy()
+        for idx, row in df_mostrar.iterrows():
+            nombre_pdf = row.get("LISTA DE PEDIDO", "")
+            df_mostrar.at[idx, "LISTA DE PEDIDO"] = get_download_link(nombre_pdf)
+
+        column_config = {
+            "No. S.C.": st.column_config.TextColumn("No. S.C.", disabled=True),
+            "CANT ITEM": st.column_config.TextColumn("Cant.", disabled=True),
+            "DESCRIPCION": st.column_config.TextColumn(
+                "Descripción", width="medium", disabled=True
+            ),
+            "No. O.C.": st.column_config.TextColumn("O.C.", disabled=True),
+            "FECHA LLEGADA": st.column_config.TextColumn("Fecha Llegada", disabled=True),
+            "LISTA DE PEDIDO": st.column_config.TextColumn("📋 Lista de Pedido", disabled=True),
+            "ESTATUS": st.column_config.TextColumn("Estatus", disabled=True),
+        }
+
+        st.dataframe(
+            df_mostrar.drop(columns=["_row_index"]),
+            column_config=column_config,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        # --- PANEL ADMIN PARA ASIGNAR PDF A FILA ---
+        if es_admin:
+            st.markdown("---")
+            st.subheader("👨‍💼 ADMIN: Asignar PDF a una fila")
+
+            fila_seleccionada = st.selectbox(
+                "📍 Selecciona la fila donde guardar el PDF:",
+                options=df_tabla.index.tolist(),
+                format_func=lambda x: f"Fila {x+1}: {df_tabla.iloc[x]['No. S.C.']} - {df_tabla.iloc[x]['DESCRIPCION'][:50]}...",
             )
 
-            # --- PANEL ADMIN PARA ASIGNAR PDF A UNA FILA ---
-            if es_admin:
-                st.markdown("---")
-                st.subheader("👨‍💼 ADMIN: Asignar PDF a una fila")
-
-                fila_seleccionada = st.selectbox(
-                    "📍 Selecciona la fila donde guardar el PDF:",
-                    options=df_tabla.index.tolist(),
-                    format_func=lambda x: f"Fila {x+1}: {df_tabla.iloc[x]['No. S.C.']} - {df_tabla.iloc[x]['DESCRIPCION'][:50]}..."
+            col1, col2 = st.columns(2)
+            with col1:
+                pdf_subido = st.file_uploader(
+                    "📎 Subir PDF", type="pdf", key=f"pdf_uploader_{fila_seleccionada}"
+                )
+            with col2:
+                nombre_pdf = st.text_input(
+                    "📝 Nombre del PDF:",
+                    value=f"SC_{df_tabla.iloc[fila_seleccionada]['No. S.C.']}_{proyecto['nombre']}.pdf",
+                    key=f"pdf_name_{fila_seleccionada}",
                 )
 
-                col1, col2 = st.columns(2)
-                with col1:
-                    pdf_subido = st.file_uploader(
-                        "📎 Subir PDF", type="pdf", key=f"pdf_uploader_{fila_seleccionada}"
+            if st.button(
+                f"💾 Guardar PDF en Fila {fila_seleccionada + 1}",
+                type="primary",
+                key=f"btn_guardar_pdf_{fila_seleccionada}",
+            ):
+                if pdf_subido:
+                    nombre_archivo_guardado = guardar_pdf(nombre_pdf, pdf_subido.getvalue())
+                    df_tabla.at[fila_seleccionada, "LISTA DE PEDIDO"] = nombre_archivo_guardado
+                    st.session_state.proyectos[indice_proyecto]["contenido"]["tabla_resumen"] = (
+                        df_tabla.to_dict(orient="records")
                     )
-                with col2:
-                    nombre_pdf = st.text_input(
-                        "📝 Nombre del PDF:",
-                        value=f"SC_{df_tabla.iloc[fila_seleccionada]['No. S.C.']}_{proyecto['nombre']}.pdf",
-                        key=f"pdf_name_{fila_seleccionada}",
-                    )
-
-                if st.button(
-                    f"💾 Guardar PDF en Fila {fila_seleccionada + 1}",
-                    type="primary",
-                    key=f"btn_guardar_pdf_{fila_seleccionada}",
-                ):
-                    if pdf_subido:
-                        nombre_archivo_guardado = guardar_pdf(nombre_pdf, pdf_subido.getvalue())
-                        df_tabla.at[fila_seleccionada, "LISTA DE PEDIDO"] = nombre_archivo_guardado
-                        st.session_state.proyectos[indice_proyecto]["contenido"]["tabla_resumen"] = (
-                            df_tabla.to_dict(orient="records")
-                        )
-                        guardar_datos(st.session_state.proyectos)
-                        st.success(f"✅ PDF guardado en Fila {fila_seleccionada + 1}")
-                        st.rerun()
-                    else:
-                        st.error("❌ Selecciona un PDF primero")
-        else:
-            st.warning("❌ No hay items válidos.")
+                    guardar_datos(st.session_state.proyectos)
+                    st.success(f"✅ PDF guardado en Fila {fila_seleccionada + 1}")
+                    st.rerun()
+                else:
+                    st.error("❌ Selecciona un PDF primero")
+    else:
+        st.warning("❌ No hay items válidos.")
