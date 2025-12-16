@@ -67,14 +67,19 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
     # 1) Items solicitados: filas con cantidad en columna D (índice 3)
     df_solicitados = df_raw[df_raw.iloc[:, 3].notna()].copy()
     items_solicitados = int(len(df_solicitados))
-
-    # 2) Tabla: solo filas donde FECHA DE LLEGADA (M, índice 12) sea una fecha válida
+    
+    # 2) Filtrar solo filas con FECHA DE LLEGADA (M, índice 12) válida
     col_fecha_raw = df_solicitados.iloc[:, 12].astype(str).str.strip()
     fechas_parseadas = pd.to_datetime(col_fecha_raw, errors="coerce", dayfirst=True)
-    df_tabla = df_solicitados[fechas_parseadas.notna()].copy()
+    df_con_fecha = df_solicitados[fechas_parseadas.notna()].copy()
 
-    if df_tabla.empty:
-        return {"error": 'No hay filas con FECHA DE LLEGADA en formato de fecha válido (por ejemplo "15/09/2025").'}
+    # 3) De esas, quedarnos solo con las que en columna O (índice 14) digan "REC"
+    if df_con_fecha.shape[1] <= 14:
+        return {"error": "El archivo no tiene la columna O (índice 14) necesaria para filtrar 'REC'."}
+
+    col_estado = df_con_fecha.iloc[:, 14].astype(str).str.strip()
+    df_tabla = df_con_fecha[col_estado == "REC"].copy()
+
 
     # 3) Items recibidos (con fecha válida)
     items_recibidos = len(df_tabla)
@@ -332,3 +337,4 @@ else:
 
         with st.expander("🔍 Ver Datos Originales (Solicitados)"):
             st.dataframe(pd.DataFrame(datos["data"]))
+
