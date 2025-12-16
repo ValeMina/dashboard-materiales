@@ -311,7 +311,7 @@ else:
 
     st.write("---")
 
-    st.subheader("📋 Items con 'RE' en O (SERVICIOS excluidos)")
+    st.subheader("📋 Items Recibidos")
     raw_tabla = datos.get("tabla_resumen", [])
 
     if raw_tabla:
@@ -360,5 +360,6 @@ else:
                 st.rerun()
     else:
         st.warning("❌ No hay items válidos.")
+
 
 
