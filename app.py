@@ -895,7 +895,7 @@ with st.expander("Ver tabla completa del proyecto"):
 # DESCARGA DE NOTAS (PDF) - TODOS
 # =========================
 st.write("")
-st.subheader("📥 Notas Descargables")
+st.subheader("📥 LISTAS DE PEDIDO")
 
 pdfs = [f for f in os.listdir(PDF_DIR) if f.lower().endswith(".pdf")]
 if pdfs:
@@ -915,6 +915,7 @@ if pdfs:
     st.markdown('</div>', unsafe_allow_html=True)
 else:
     st.info("No hay PDFs disponibles. El administrador puede subirlos en su panel.")
+
 
 
 
