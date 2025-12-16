@@ -65,14 +65,6 @@ if "proyectos" not in st.session_state:
 
 # --- PROCESAR EXCEL ---
 def procesar_nuevo_excel(df_raw: pd.DataFrame):
-    """
-    Filtra:
-    - Columna O contiene 'RE'
-    - Columna F (DESCRIPCION) NO contiene 'SERVICIO'
-    Devuelve tabla con:
-    A: No. S.C., D: CANT ITEM, F: DESCRIPCION, H: No. O.C.,
-    M: FECHA LLEGADA, LISTA DE PEDIDO (vacía), O: ESTATUS.
-    """
     if df_raw.shape[1] < 15:
         return {"error": "El archivo no tiene suficientes columnas (mínimo hasta la O)."}
 
@@ -90,7 +82,6 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
         return {"error": "No hay filas con 'RE' en O y sin 'SERVICIO' en F."}
 
     items_recibidos = len(df_tabla)
-
     df_sin_servicio = df_solicitados[~col_desc.str.contains("SERVICIO", na=False)]
     items_sin_oc = int(df_sin_servicio.iloc[:, 7].isnull().sum())
     avance = (items_recibidos / items_solicitados * 100) if items_solicitados > 0 else 0.0
@@ -110,7 +101,7 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
             "DESCRIPCION": desc,
             "No. O.C.": oc,
             "FECHA LLEGADA": fecha,
-            "LISTA DE PEDIDO": "",   # nombre de PDF
+            "LISTA DE PEDIDO": "",   # texto editable por admin
             "ESTATUS": estatus,
             "_row_index": int(idx),
         })
@@ -271,11 +262,13 @@ else:
     if raw_tabla:
         df_tabla = pd.DataFrame(raw_tabla)
 
-        # Copia para mostrar con texto/enlace
+        # Para visualización pública, convertir a texto / enlace
         df_mostrar = df_tabla.copy()
         for idx, row in df_mostrar.iterrows():
-            nombre_pdf = row.get("LISTA DE PEDIDO", "")
-            df_mostrar.at[idx, "LISTA DE PEDIDO"] = get_download_link(nombre_pdf)
+            nombre_lp = row.get("LISTA DE PEDIDO", "")
+            df_mostrar.at[idx, "LISTA DE PEDIDO"] = (
+                nombre_lp if nombre_lp else "❌ Sin LP Asignada"
+            )
 
         column_config = {
             "No. S.C.": st.column_config.TextColumn("No. S.C.", disabled=True),
@@ -285,16 +278,32 @@ else:
             ),
             "No. O.C.": st.column_config.TextColumn("O.C.", disabled=True),
             "FECHA LLEGADA": st.column_config.TextColumn("Fecha Llegada", disabled=True),
-            "LISTA DE PEDIDO": st.column_config.TextColumn("📋 Lista de Pedido", disabled=True),
+            "LISTA DE PEDIDO": st.column_config.TextColumn(
+                "📋 Lista de Pedido",
+                disabled=not es_admin,   # editable SOLO si eres admin
+            ),
             "ESTATUS": st.column_config.TextColumn("Estatus", disabled=True),
         }
 
-        st.dataframe(
+        # Editor solo para admin (o modo solo lectura para público)
+        df_editado = st.data_editor(
             df_mostrar.drop(columns=["_row_index"]),
             column_config=column_config,
             use_container_width=True,
             hide_index=True,
+            num_rows="fixed",
+            key=f"editor_{proyecto['id']}",
         )
 
+        if es_admin:
+            if st.button("💾 Guardar cambios en Lista de Pedido", type="primary"):
+                # Volcar cambios de LISTA DE PEDIDO a la tabla original
+                df_tabla["LISTA DE PEDIDO"] = df_editado["LISTA DE PEDIDO"]
+                st.session_state.proyectos[indice_proyecto]["contenido"]["tabla_resumen"] = (
+                    df_tabla.to_dict(orient="records")
+                )
+                guardar_datos(st.session_state.proyectos)
+                st.success("✅ Cambios guardados.")
+                st.rerun()
     else:
         st.warning("❌ No hay items válidos.")
