@@ -92,11 +92,12 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
     if df_tabla.empty:
         return {"error": "No hay filas con 'RE' en O y sin 'SERVICIO' en F."}
 
-    # 3) Items recibidos (materiales con RE)
+    # 3) Items recibidos (con 'RE' en O y sin 'SERVICIO' en F)
     items_recibidos = len(df_tabla)
 
-    # 4) Items sin OC SOBRE TODOS LOS SOLICITADOS (columna H nula)
-    items_sin_oc = int(df_solicitados.iloc[:, 7].isnull().sum())
+    # 4) Items sin OC (excluyendo servicios → igual que en tu código de referencia)
+    df_sin_servicio = df_solicitados[~col_desc.str.contains("SERVICIO", na=False)]
+    items_sin_oc = int(df_sin_servicio.iloc[:, 7].isnull().sum())
 
     # 5) Avance global
     avance = (items_recibidos / items_solicitados * 100) if items_solicitados > 0 else 0.0
@@ -236,9 +237,9 @@ else:
     with c1:
         st.metric("Items Solicitados", kpis["items_requisitados"])
     with c2:
-        st.metric("Items Recibidos", kpis["items_recibidos"])
+        st.metric("Items con 'RE' (sin SERVICIOS)", kpis["items_recibidos"])
     with c3:
-        st.metric("Items sin OC", kpis["items_sin_oc"])
+        st.metric("Items sin OC (sin SERVICIOS)", kpis["items_sin_oc"])
     with c4:
         st.metric("Avance", f"{kpis['avance']:.1f}%")
     st.write("---")
@@ -247,7 +248,7 @@ else:
     with col_graf:
         df_graf = pd.DataFrame(
             {
-                "Estado": ["Solicitados", "Recibidos", "Sin OC"],
+                "Estado": ["Solicitados", "Con 'RE' (sin SERVICIOS)", "Sin OC (sin SERVICIOS)"],
                 "Cantidad": [
                     kpis["items_requisitados"],
                     kpis["items_recibidos"],
@@ -263,8 +264,8 @@ else:
             text_auto=True,
             color_discrete_map={
                 "Solicitados": "#3498db",
-                "Recibidos": "#2ecc71",
-                "Sin OC": "#e74c3c",
+                "Con 'RE' (sin SERVICIOS)": "#2ecc71",
+                "Sin OC (sin SERVICIOS)": "#e74c3c",
             },
             height=300,
         )
@@ -278,7 +279,7 @@ else:
     if raw_tabla:
         df_tabla = pd.DataFrame(raw_tabla)
 
-        # Para visualización: mostrar texto existente o mensaje por defecto
+        # Para visualización: texto existente o mensaje por defecto
         df_mostrar = df_tabla.copy()
         for idx, row in df_mostrar.iterrows():
             nombre_lp = row.get("LISTA DE PEDIDO", "")
@@ -298,26 +299,3 @@ else:
                 "📋 Lista de Pedido",
                 disabled=not es_admin,   # editable solo para admin
             ),
-            "ESTATUS": st.column_config.TextColumn("Estatus", disabled=True),
-        }
-
-        df_editado = st.data_editor(
-            df_mostrar.drop(columns=["_row_index"]),
-            column_config=column_config,
-            use_container_width=True,
-            hide_index=True,
-            num_rows="fixed",
-            key=f"editor_{proyecto['id']}",
-        )
-
-        if es_admin:
-            if st.button("💾 Guardar cambios en Lista de Pedido", type="primary"):
-                df_tabla["LISTA DE PEDIDO"] = df_editado["LISTA DE PEDIDO"]
-                st.session_state.proyectos[indice_proyecto]["contenido"]["tabla_resumen"] = (
-                    df_tabla.to_dict(orient="records")
-                )
-                guardar_datos(st.session_state.proyectos)
-                st.success("✅ Cambios guardados.")
-                st.rerun()
-    else:
-        st.warning("❌ No hay items válidos.")
