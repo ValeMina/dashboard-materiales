@@ -129,9 +129,55 @@ with st.sidebar:
         st.success("🔓 Modo Editor Activo")
         st.markdown("---")
 
-        st.subheader("📤 Subir Nuevo Proyecto")
-        nombre_proyecto = st.text_input("Nombre del Reporte (Ej. Semana 4)")
-        archivo_subido = st.file_uploader("Archivo Excel/CSV", type=["xlsx", "xls", "csv"])
+               st.subheader("📤 Subir Nuevos Proyectos")
+
+        # Ahora acepta múltiples archivos
+        archivos_subidos = st.file_uploader(
+            "Archivos Excel/CSV",
+            type=["xlsx", "xls", "csv"],
+            accept_multiple_files=True,
+        )
+
+        if st.button("Procesar y Guardar"):
+            if archivos_subidos:
+                for archivo_subido in archivos_subidos:
+                    try:
+                        # Leer archivo
+                        if archivo_subido.name.endswith(".csv"):
+                            df = pd.read_csv(archivo_subido, header=5)
+                            df_nombre = pd.read_csv(archivo_subido, header=None)
+                        else:
+                            df = pd.read_excel(archivo_subido, header=5)
+                            df_nombre = pd.read_excel(archivo_subido, header=None)
+
+                        # Tomar nombre desde celda C4 (fila 3, columna 2, índice 0‑based)
+                        try:
+                            nombre_proyecto = str(df_nombre.iloc[3, 2]).strip()
+                        except Exception:
+                            nombre_proyecto = archivo_subido.name  # respaldo
+
+                        if not nombre_proyecto:
+                            nombre_proyecto = archivo_subido.name
+
+                        resultado = procesar_nuevo_excel(df)
+
+                        if "error" in resultado:
+                            st.error(f"{archivo_subido.name}: {resultado['error']}")
+                        else:
+                            nuevo_registro = {
+                                "id": f"rep_{datetime.datetime.now().timestamp()}",
+                                "nombre": nombre_proyecto,
+                                "contenido": resultado,
+                            }
+                            st.session_state.proyectos.append(nuevo_registro)
+                            guardar_datos(st.session_state.proyectos)
+                            st.success(f"Reporte '{nombre_proyecto}' guardado con éxito.")
+                    except Exception as e:
+                        st.error(f"{archivo_subido.name}: Error crítico: {e}")
+                st.rerun()
+            else:
+                st.warning("No se seleccionaron archivos.")
+
 
         if st.button("Procesar y Guardar"):
             if nombre_proyecto and archivo_subido:
@@ -312,4 +358,5 @@ else:
 
         with st.expander("🔍 Ver Datos Originales (Solicitados)"):
             st.dataframe(pd.DataFrame(datos["data"]))
+
 
