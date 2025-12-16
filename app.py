@@ -45,7 +45,7 @@ def get_download_link(nombre_pdf):
             b64 = base64.b64encode(f.read()).decode()
         # enlace tipo data:; no todos los navegadores lo soportan perfecto, pero evita exponer rutas.[web:16]
         return f"[📥 Descargar](data:application/pdf;base64,{b64})"
-    return "❌ Sin PDF"
+    return "❌ Sin LP Asignada"
 
 # --- PERSISTENCIA ---
 def cargar_datos():
@@ -230,9 +230,9 @@ else:
     with c1:
         st.metric("Items Solicitados", kpis["items_requisitados"])
     with c2:
-        st.metric("Items con 'RE' (sin SERVICIOS)", kpis["items_recibidos"])
+        st.metric("Items Recibidos", kpis["items_recibidos"])
     with c3:
-        st.metric("Items sin OC (sin SERVICIOS)", kpis["items_sin_oc"])
+        st.metric("Items sin OC", kpis["items_sin_oc"])
     with c4:
         st.metric("Avance", f"{kpis['avance']:.1f}%")
     st.write("---")
@@ -241,7 +241,7 @@ else:
     with col_graf:
         df_graf = pd.DataFrame(
             {
-                "Estado": ["Solicitados", "Con 'RE' (sin SERVICIOS)", "Sin OC (sin SERVICIOS)"],
+                "Estado": ["Solicitados", "Recibidos", "Sin OC"],
                 "Cantidad": [
                     kpis["items_requisitados"],
                     kpis["items_recibidos"],
@@ -338,3 +338,4 @@ else:
                     st.error("❌ Selecciona un PDF primero")
     else:
         st.warning("❌ No hay items válidos.")
+
