@@ -556,7 +556,7 @@ div[data-baseweb="input"] button{ background: transparent !important; color:#0F1
 }
 .stSelectbox svg, .stSelectbox path { fill: #0F172A !important; color:#0F172A !important; }
 
-/* Dropdown LISTA */
+/* Dropdown LISTA (fondo blanco) */
 div[role="listbox"], ul[role="listbox"], div[data-baseweb="menu"]{
   background: #FFFFFF !important;
   border: 1px solid rgba(15,23,42,.12) !important;
@@ -564,13 +564,17 @@ div[role="listbox"], ul[role="listbox"], div[data-baseweb="menu"]{
   box-shadow: 0 18px 36px rgba(15,23,42,.15) !important;
 }
 
+/* Texto dentro del dropdown */
+div[data-baseweb="menu"] * ,
 div[role="listbox"] li * , ul[role="listbox"] li *{
   color: #0F172A !important;
 }
 
+/* Hover */
 div[role="listbox"] li:hover, ul[role="listbox"] li:hover{
   background: rgba(14,165,233,.12) !important;
 }
+
 
 
 
@@ -911,6 +915,7 @@ if pdfs:
     st.markdown('</div>', unsafe_allow_html=True)
 else:
     st.info("No hay PDFs disponibles. El administrador puede subirlos en su panel.")
+
 
 
 
