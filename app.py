@@ -286,7 +286,7 @@ else:
     with col_graf:
         df_graf = pd.DataFrame(
             {
-                "Estado": ["Solicitados", "Con 'RE' (sin SERVICIOS)", "Sin OC (sin SERVICIOS)"],
+                "Estado": ["Solicitados", "Recibidos", "Sin oc"],
                 "Cantidad": [
                     kpis["items_requisitados"],
                     kpis["items_recibidos"],
@@ -360,4 +360,5 @@ else:
                 st.rerun()
     else:
         st.warning("❌ No hay items válidos.")
+
 
