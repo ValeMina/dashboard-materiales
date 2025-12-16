@@ -275,9 +275,9 @@ else:
     with c1:
         st.metric("Items Solicitados", kpis["items_requisitados"])
     with c2:
-        st.metric("Items con 'RE' (sin SERVICIOS)", kpis["items_recibidos"])
+        st.metric("Items Recibidos", kpis["items_recibidos"])
     with c3:
-        st.metric("Items sin OC (sin SERVICIOS)", kpis["items_sin_oc"])
+        st.metric("Items sin OC", kpis["items_sin_oc"])
     with c4:
         st.metric("Avance", f"{kpis['avance']:.1f}%")
     st.write("---")
@@ -360,3 +360,4 @@ else:
                 st.rerun()
     else:
         st.warning("❌ No hay items válidos.")
+
