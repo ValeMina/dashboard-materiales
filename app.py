@@ -558,14 +558,13 @@ div[data-baseweb="input"] button{ background: transparent !important; color:#0F1
 
 /* Dropdown LISTA */
 div[role="listbox"], ul[role="listbox"], div[data-baseweb="menu"]{
-  background: #0B2230 !important;
-  border: 1px solid rgba(255,255,255,.14) !important;
-  border-radius: 14px !important;
-  box-shadow: 0 18px 36px rgba(15,23,42,.35) !important;
+  background: #FFFFFF !important;
+  border: 1px solid rgba(15,23,42,.12) !important;
 }
-div[role="listbox"] li, ul[role="listbox"] li{ background: transparent !important; }
-div[role="listbox"] li * , ul[role="listbox"] li *{ color: #FFFFFF !important; }
-div[role="listbox"] li:hover, ul[role="listbox"] li:hover{ background: rgba(14,165,233,.25) !important; }
+div[role="listbox"] li * , ul[role="listbox"] li *{
+  color: #0F172A !important;
+}
+
 
 /* File uploader dropzone blanco */
 [data-testid="stFileUploaderDropzone"]{
@@ -904,4 +903,5 @@ if pdfs:
     st.markdown('</div>', unsafe_allow_html=True)
 else:
     st.info("No hay PDFs disponibles. El administrador puede subirlos en su panel.")
+
 
