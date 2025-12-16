@@ -166,7 +166,7 @@ with st.sidebar:
             guardar_datos([])
             st.rerun()
     else:
-        st.info("Introduce la clave '1234'.")
+        st.info("Introduce la clave de acceso.")
 
 # --- CONTENIDO PRINCIPAL ---
 if not st.session_state.proyectos:
@@ -312,3 +312,4 @@ else:
 
         with st.expander("🔍 Ver Datos Originales (Solicitados)"):
             st.dataframe(pd.DataFrame(datos["data"]))
+
