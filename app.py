@@ -51,7 +51,7 @@ if "proyectos" not in st.session_state:
 # --- PROCESAMIENTO DEL EXCEL ---
 def procesar_nuevo_excel(df_raw: pd.DataFrame):
     """
-    Tabla basada en filtro de columna O que contenga 'RE'.
+    Tabla basada en filtro de columna O que contenga 'RE' Y NO contenga 'SERVICIO' en descripción.
     Columnas usadas por índice:
     - 0 (A): No. S.C.
     - 3 (D): CANT ITEM S.C.
@@ -68,21 +68,27 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
     df_solicitados = df_raw[df_raw.iloc[:, 3].notna()].copy()
     items_solicitados = int(len(df_solicitados))
 
-    # 2) FILTRO ÚNICO: columna O (índice 14) debe contener "RE" en el texto
+    # 2) FILTRO DOBLE: columna O debe contener "RE" Y descripción NO debe contener "SERVICIO"
     col_o = df_solicitados.iloc[:, 14].astype(str).str.upper()
-    df_tabla = df_solicitados[col_o.str.contains("RE", na=False)].copy()
+    col_desc = df_solicitados.iloc[:, 5].astype(str).str.upper()
+    
+    # Filtrar: RE en O Y NO SERVICIO en descripción
+    mask_re = col_o.str.contains("RE", na=False)
+    mask_no_servicio = ~col_desc.str.contains("SERVICIO", na=False)
+    df_tabla = df_solicitados[mask_re & mask_no_servicio].copy()
 
     if df_tabla.empty:
-        return {"error": "No hay filas donde la columna O contenga 'RE'."}
+        return {"error": "No hay filas donde la columna O contenga 'RE' y descripción NO contenga 'SERVICIO'."}
 
-    # 3) Items recibidos (con 'RE' en columna O)
+    # 3) Items recibidos (con 'RE' en O y sin 'SERVICIO')
     items_recibidos = len(df_tabla)
 
-    # 4) Otros KPIs (sobre solicitados)
-    items_sin_oc = int(df_solicitados.iloc[:, 7].isnull().sum())
+    # 4) Otros KPIs (sobre solicitados) - también excluyendo SERVICIO
+    df_solicitados_sin_servicio = df_solicitados[~col_desc.str.contains("SERVICIO", na=False)]
+    items_sin_oc = int(df_solicitados_sin_servicio.iloc[:, 7].isnull().sum())
     avance = (items_recibidos / items_solicitados * 100) if items_solicitados > 0 else 0.0
 
-    # 5) Construir tabla_resumen con las columnas solicitadas
+    # 5) Construir tabla_resumen con las columnas solicitadas (solo materiales, sin servicios)
     tabla_resumen = []
     for _, row in df_tabla.iterrows():
         sc    = str(row.iloc[0])  if pd.notnull(row.iloc[0])  else ""
@@ -116,6 +122,25 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
         "fecha_carga": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
     }
 
+# --- FUNCIÓN PARA REGENERAR TABLA DE PROYECTOS EXISTENTES ---
+def regenerar_tablas_existentes():
+    """Regenera la tabla_resumen de todos los proyectos existentes"""
+    if st.session_state.proyectos:
+        with st.spinner("🔄 Regenerando tablas existentes (excluyendo SERVICIOS)..."):
+            for proyecto in st.session_state.proyectos:
+                if "data" in proyecto["contenido"]:
+                    # Reconstruir df desde data preview
+                    df_raw = pd.DataFrame(proyecto["contenido"]["data"])
+                    resultado = procesar_nuevo_excel(df_raw)
+                    
+                    if "error" not in resultado:
+                        proyecto["contenido"] = resultado
+                        proyecto["contenido"]["fecha_carga"] = proyecto["contenido"].get("fecha_carga", "")
+            
+            guardar_datos(st.session_state.proyectos)
+            st.success("✅ Todas las tablas han sido regeneradas (SERVICIOS excluidos).")
+            st.rerun()
+
 # --- UI PRINCIPAL ---
 es_admin = False
 
@@ -127,6 +152,12 @@ with st.sidebar:
     if password == "1234":
         es_admin = True
         st.success("🔓 Modo Editor Activo")
+        st.markdown("---")
+
+        # BOTÓN PARA REGENERAR TABLAS
+        if st.button("🔄 Regenerar Tablas (sin SERVICIOS)"):
+            regenerar_tablas_existentes()
+
         st.markdown("---")
 
         # --- SUBIR NUEVOS PROYECTOS (MÚLTIPLES ARCHIVOS, NOMBRE DESDE C4) ---
@@ -173,7 +204,7 @@ with st.sidebar:
                             }
                             st.session_state.proyectos.append(nuevo_registro)
                             guardar_datos(st.session_state.proyectos)
-                            st.success(f"Reporte '{nombre_proyecto}' guardado con éxito.")
+                            st.success(f"Reporte '{nombre_proyecto}' guardado con éxito (SERVICIOS excluidos).")
                     except Exception as e:
                         st.error(f"{archivo_subido.name}: Error crítico: {e}")
                 st.rerun()
@@ -212,9 +243,9 @@ else:
         with c1:
             st.metric("Items Solicitados", kpis["items_requisitados"])
         with c2:
-            st.metric("Items con 'RE' en col. O", kpis["items_recibidos"])
+            st.metric("Items con 'RE' (sin SERVICIOS)", kpis["items_recibidos"])
         with c3:
-            st.metric("Items sin OC", kpis["items_sin_oc"])
+            st.metric("Items sin OC (sin SERVICIOS)", kpis["items_sin_oc"])
         with c4:
             st.metric("Avance", f"{kpis['avance']:.1f}%")
         st.write("---")
@@ -224,7 +255,7 @@ else:
         with col_graf:
             df_graf = pd.DataFrame(
                 {
-                    "Estado": ["Solicitados", "Con 'RE' en O", "Sin OC"],
+                    "Estado": ["Solicitados", "Con 'RE' (sin SERVICIOS)", "Sin OC (sin SERVICIOS)"],
                     "Cantidad": [
                         kpis["items_requisitados"],
                         kpis["items_recibidos"],
@@ -240,8 +271,8 @@ else:
                 text_auto=True,
                 color_discrete_map={
                     "Solicitados": "#3498db",
-                    "Con 'RE' en O": "#2ecc71",
-                    "Sin OC": "#e74c3c",
+                    "Con 'RE' (sin SERVICIOS)": "#2ecc71",
+                    "Sin OC (sin SERVICIOS)": "#e74c3c",
                 },
                 height=300,
             )
@@ -249,19 +280,17 @@ else:
 
         st.write("---")
 
-        # TABLA CON COLUMNAS SOLICITADAS (filtradas por 'RE' en columna O)
-        st.subheader("📋 Items Recibidos (con 'RE' en columna O)")
+        # TABLA CON COLUMNAS SOLICITADAS (filtradas por 'RE' en O y sin 'SERVICIO')
+        st.subheader("📋 Items Recibidos (con 'RE' en O, sin SERVICIOS)")
         raw_tabla = datos.get("tabla_resumen", [])
 
         if raw_tabla:
             df_tabla = pd.DataFrame(raw_tabla)
-
-            st.success(f"✅ Mostrando {len(df_tabla)} items con 'RE' en columna O.")
-
+            st.success(f"✅ Mostrando {len(df_tabla)} items con 'RE' en columna O (SERVICIOS excluidos).")
             st.dataframe(
                 df_tabla,
                 use_container_width=True,
                 hide_index=True,
             )
         else:
-            st.warning("❌ No hay items con 'RE' en columna O.")
+            st.warning("❌ No hay items con 'RE' en columna O que no sean SERVICIOS.")
