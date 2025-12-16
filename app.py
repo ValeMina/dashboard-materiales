@@ -4,34 +4,12 @@ import plotly.express as px
 import os
 import json
 import datetime
+from pathlib import Path
 
-# --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Tablero de Control R-1926", layout="wide", page_icon="⚓")
 
 DB_FILE = "db_materiales.json"
-PDF_DIR = "pdfs_listas_pedido"
 
-# Crear directorio de PDFs si no existe
-os.makedirs(PDF_DIR, exist_ok=True)
-
-# --- LOGO Y TÍTULO ---
-LOGO_URL = "https://github.com/ValeMina/dashboard-materiales/raw/8393550c123ddae68f49987994c72395e0339e67/logo%20tng.png"
-
-col_logo, col_titulo = st.columns([1, 3])
-with col_logo:
-    st.image(LOGO_URL, use_column_width=True)
-with col_titulo:
-    st.markdown(
-        """
-        <h1 style='text-align: left; margin-bottom: 0;'>⚓ Dashboard: CONTROL DE MATERIALES</h1>
-        <p style='text-align: left; margin-top: 0;'>Sistema de Control de Materiales</p>
-        """,
-        unsafe_allow_html=True,
-    )
-
-st.write("---")
-
-# --- PERSISTENCIA ---
 def cargar_datos():
     if os.path.exists(DB_FILE):
         try:
@@ -43,55 +21,33 @@ def cargar_datos():
 
 def guardar_datos(lista_proyectos):
     with open(DB_FILE, "w", encoding="utf-8") as f:
-        json.dump(lista_proyectos, f, default=str)
+        json.dump(lista_proyectos, f, indent=2, ensure_ascii=False)
 
-if "proyectos" not in st.session_state:
-    st.session_state.proyectos = cargar_datos()
-
-# --- PROCESAMIENTO DEL EXCEL ---
-def procesar_nuevo_excel(df_raw: pd.DataFrame):
-    """
-    Tabla basada en FECHA DE LLEGADA válida.
-    Columnas usadas por índice:
-    - 0 (A): No. S.C.
-    - 3 (D): CANT ITEM S.C.
-    - 5 (F): DESCRIPCION DE LA PARTIDA
-    - 7 (H): No. O.C.
-    - 12 (M): FECHA DE LLEGADA
-    Solo se consideran filas donde la columna M se puede interpretar como fecha.
-    """
-    # Verificar columnas suficientes
-    if df_raw.shape[1] < 13:
-        return {"error": "El archivo no tiene suficientes columnas (mínimo hasta la M)."}
-
-    # 1) Items solicitados: filas con cantidad en columna D (índice 3)
-    df_solicitados = df_raw[df_raw.iloc[:, 3].notna()].copy()
+def procesar_nuevo_excel(df_raw):
+    # 1) Items solicitados: filas con No. S.C. numérico (columna A, índice 0)
+    df_solicitados = df_raw[pd.to_numeric(df_raw.iloc[:, 0], errors='coerce').notna()].copy()
     items_solicitados = int(len(df_solicitados))
-
-    # 2) Tabla: solo filas donde FECHA DE LLEGADA (M, índice 12) sea una fecha válida
-    col_fecha_raw = df_solicitados.iloc[:, 12].astype(str).str.strip()
-    fechas_parseadas = pd.to_datetime(col_fecha_raw, errors="coerce", dayfirst=True)
-    df_tabla = df_solicitados[fechas_parseadas.notna()].copy()
-
-    if df_tabla.empty:
-        return {"error": 'No hay filas con FECHA DE LLEGADA en formato de fecha válido (por ejemplo "15/09/2025").'}
-
-    # 3) Items recibidos (con fecha válida)
-    items_recibidos = len(df_tabla)
-
-    # 4) Otros KPIs (sobre solicitados)
-    items_sin_oc = int(df_solicitados.iloc[:, 7].isnull().sum())
-    avance = (items_recibidos / items_solicitados * 100) if items_solicitados > 0 else 0.0
-
-    # 5) Construir tabla_resumen
+    
+    # 2) Filtrar por FECHA DE LLEGADA válida (columna M, índice 12)
+    df_solicitados['fecha_temp'] = pd.to_datetime(df_solicitados.iloc[:, 12], dayfirst=True, errors='coerce')
+    df_tabla = df_solicitados[df_solicitados['fecha_temp'].notna()].copy()
+    
+    if df_tabla.shape[1] <= 7:
+        return {"error": "El archivo no tiene la columna H (índice 7) para O.C. numérico."}
+    
+    # 3) NUEVO: Filtrar SOLO donde No. O.C. (columna H, índice 7) tiene código NUMÉRICO y ORDENAR
+    df_con_oc_numeric = df_tabla[pd.to_numeric(df_tabla.iloc[:, 7], errors='coerce').notna()].copy()
+    df_con_oc_numeric = df_con_oc_numeric.sort_values(by=df_con_oc_numeric.columns[7])  # Ordenar por O.C.
+    
+    # 4) Construir tabla_resumen SOLO con códigos numéricos en O.C.
     tabla_resumen = []
-    for _, row in df_tabla.iterrows():
-        sc = str(row.iloc[0]) if pd.notnull(row.iloc[0]) else ""
-        cant = str(row.iloc[3]) if pd.notnull(row.iloc[3]) else ""
-        desc = str(row.iloc[5]) if pd.notnull(row.iloc[5]) else ""
-        oc = str(row.iloc[7]) if pd.notnull(row.iloc[7]) else ""
-        fecha = str(row.iloc[12]) if pd.notnull(row.iloc[12]) else ""
-
+    for _, row in df_con_oc_numeric.iterrows():
+        sc = str(row.iloc[0]) if pd.notnull(row.iloc[0]) else ""      # Col A: No. S.C.
+        cant = str(row.iloc[3]) if pd.notnull(row.iloc[3]) else ""    # Col D: CANT ITEM
+        desc = str(row.iloc[5]) if pd.notnull(row.iloc[5]) else ""    # Col F: DESCRIPCION
+        oc = str(row.iloc[7]) if pd.notnull(row.iloc[7]) else ""      # Col H: No. O.C. (NUMÉRICO)
+        fecha = str(row.iloc[12]) if pd.notnull(row.iloc[12]) else "" # Col M: FECHA LLEGADA
+        
         tabla_resumen.append({
             "No. S.C.": sc,
             "CANT ITEM": cant,
@@ -100,235 +56,138 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
             "FECHA LLEGADA": fecha,
             "LISTA DE PEDIDO": ""
         })
-
-    data_preview = df_solicitados.fillna("").head(500).to_dict(orient="records")
-
+    
+    # KPIs
+    items_recibidos = len(tabla_resumen)
+    items_sin_oc = items_recibidos  # Temporal, ajustar según necesites
+    avance = (items_recibidos / items_solicitados * 100) if items_solicitados > 0 else 0
+    
+    # Datos originales para expander
+    data_preview = df_raw.head(100).to_dict('records')
+    
     return {
         "kpis": {
-            "items_requisitados": items_solicitados,
+            "items_solicitados": items_solicitados,
             "items_recibidos": items_recibidos,
             "items_sin_oc": items_sin_oc,
-            "avance": avance,
+            "avance": round(avance, 1)
         },
         "tabla_resumen": tabla_resumen,
         "data": data_preview,
-        "fecha_carga": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "fecha_carga": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     }
 
-# --- UI PRINCIPAL ---
-es_admin = False
-
-# --- SIDEBAR ---
-with st.sidebar:
-    st.header("⚙️ Panel de Administración")
-    password = st.text_input("Clave de Acceso", type="password")
-
-    if password == "1234":
-        es_admin = True
-        st.success("🔓 Modo Editor Activo")
-        st.markdown("---")
-
-        # --- SUBIR NUEVOS PROYECTOS (MÚLTIPLES ARCHIVOS, NOMBRE DESDE C4) ---
-        st.subheader("📤 Subir Nuevos Proyectos")
-
-        archivos_subidos = st.file_uploader(
-            "Archivos Excel/CSV",
-            type=["xlsx", "xls", "csv"],
-            accept_multiple_files=True,
-        )
-
-        if st.button("Procesar y Guardar"):
-            if archivos_subidos:
-                for archivo_subido in archivos_subidos:
-                    try:
-                        # Leer archivo completo para obtener C4 y luego los datos
-                        if archivo_subido.name.endswith(".csv"):
-                            df = pd.read_csv(archivo_subido, header=5)
-                            archivo_subido.seek(0)
-                            df_nombre = pd.read_csv(archivo_subido, header=None)
-                        else:
-                            df = pd.read_excel(archivo_subido, header=5)
-                            archivo_subido.seek(0)
-                            df_nombre = pd.read_excel(archivo_subido, header=None)
-
-                        # Nombre desde celda C4 (fila 3, columna 2; índice base 0)
-                        try:
-                            nombre_proyecto = str(df_nombre.iloc[3, 2]).strip()
-                        except Exception:
-                            nombre_proyecto = archivo_subido.name
-
-                        if not nombre_proyecto:
-                            nombre_proyecto = archivo_subido.name
-
-                        resultado = procesar_nuevo_excel(df)
-
-                        if "error" in resultado:
-                            st.error(f"{archivo_subido.name}: {resultado['error']}")
-                        else:
-                            nuevo_registro = {
-                                "id": f"rep_{datetime.datetime.now().timestamp()}",
-                                "nombre": nombre_proyecto,
-                                "contenido": resultado,
-                            }
-                            st.session_state.proyectos.append(nuevo_registro)
-                            guardar_datos(st.session_state.proyectos)
-                            st.success(f"Reporte '{nombre_proyecto}' guardado con éxito.")
-                    except Exception as e:
-                        st.error(f"{archivo_subido.name}: Error crítico: {e}")
-                st.rerun()
-            else:
-                st.warning("No se seleccionaron archivos.")
-
-        st.markdown("---")
-        if st.button("🗑️ Borrar Todo"):
-            st.session_state.proyectos = []
-            guardar_datos([])
-            st.rerun()
-    else:
-        # Puedes dejarlo vacío o mostrar otro mensaje
-        pass
-
-# --- CONTENIDO PRINCIPAL ---
-if not st.session_state.proyectos:
-    st.info("👋 No hay reportes cargados.")
+# SIDEBAR - PASSWORD
+password = st.sidebar.text_input("🔑 Clave de acceso:", type="password")
+if password == "1234":
+    st.sidebar.success("✅ Acceso autorizado")
 else:
-    opciones = [p["nombre"] for p in st.session_state.proyectos]
-    seleccion = st.selectbox("📂 Selecciona reporte:", opciones)
+    st.sidebar.info("Introduce la clave '1234'.")
+    st.stop()
 
-    indice_proyecto = next(
-        (i for i, p in enumerate(st.session_state.proyectos) if p["nombre"] == seleccion),
-        None,
+# TÍTULO PRINCIPAL
+st.title("⚓ Tablero de Control Materiales R-1926")
+
+# CARGA DE ARCHIVO
+uploaded_file = st.file_uploader("📁 Sube tu Excel", type=["xlsx", "xls"])
+proyectos = cargar_datos()
+
+if uploaded_file is not None:
+    # Procesar Excel
+    df_raw = pd.read_excel(uploaded_file)
+    datos = procesar_nuevo_excel(df_raw)
+    
+    if "error" in datos:
+        st.error(datos["error"])
+        st.stop()
+    
+    # NOMBRE DEL PROYECTO (de C4)
+    nombre_proyecto = df_raw.iloc[3, 2] if len(df_raw) > 3 and len(df_raw.columns) > 2 else "Sin nombre"
+    
+    # AGREGAR O ACTUALIZAR PROYECTO
+    proyecto_existente = next((p for p in proyectos if p["nombre"] == str(nombre_proyecto)), None)
+    if proyecto_existente:
+        proyecto_existente.update(datos)
+        proyecto_existente["ultima_actualizacion"] = datos["fecha_carga"]
+    else:
+        proyectos.append({
+            "nombre": str(nombre_proyecto),
+            **datos,
+            "fecha_carga": datos["fecha_carga"],
+            "ultima_actualizacion": datos["fecha_carga"]
+        })
+    
+    guardar_datos(proyectos)
+    st.success(f"✅ {nombre_proyecto} procesado y guardado!")
+    
+    # SELECCIÓN DE PROYECTO
+    proyecto_seleccionado = st.selectbox(
+        "📋 Selecciona proyecto:",
+        ["Último cargado"] + [p["nombre"] for p in proyectos]
     )
-    proyecto = st.session_state.proyectos[indice_proyecto]
-
-    if proyecto:
-        datos = proyecto["contenido"]
-        kpis = datos["kpis"]
-
-        st.markdown(f"### Reporte: {proyecto['nombre']} (Cargado: {datos['fecha_carga']})")
-
-        # KPIs
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            st.metric("Items Solicitados", kpis["items_requisitados"])
-        with c2:
-            st.metric("Items con Fecha (válida)", kpis["items_recibidos"])
-        with c3:
-            st.metric("Items sin OC", kpis["items_sin_oc"])
-        with c4:
-            st.metric("Avance", f"{kpis['avance']:.1f}%")
-        st.write("---")
-
-        # GRÁFICA
-        col_graf, _ = st.columns([1, 0.1])
-        with col_graf:
-            df_graf = pd.DataFrame(
-                {
-                    "Estado": ["Solicitados", "Con Fecha válida", "Sin OC"],
-                    "Cantidad": [
-                        kpis["items_requisitados"],
-                        kpis["items_recibidos"],
-                        kpis["items_sin_oc"],
-                    ],
-                }
-            )
-            fig = px.bar(
-                df_graf,
-                x="Estado",
-                y="Cantidad",
-                color="Estado",
-                text_auto=True,
-                color_discrete_map={
-                    "Solicitados": "#3498db",
-                    "Con Fecha válida": "#2ecc71",
-                    "Sin OC": "#e74c3c",
-                },
-                height=300,
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-        st.write("---")
-
-        # TABLA DE GESTIÓN DE PEDIDOS
-        st.subheader("📋 Gestión de Pedidos (Solo con FECHA DE LLEGADA válida)")
-        raw_tabla = datos.get("tabla_resumen", [])
-
-        if raw_tabla:
-            df_tabla = pd.DataFrame(raw_tabla)
-
-            st.success(f"✅ Mostrando {len(df_tabla)} items con FECHA DE LLEGADA válida.")
-
-            column_config = {
-                "No. S.C.": st.column_config.TextColumn("No. S.C.", disabled=True),
-                "CANT ITEM": st.column_config.TextColumn("Cant.", disabled=True),
-                "DESCRIPCION": st.column_config.TextColumn("Descripción", disabled=True),
-                "No. O.C.": st.column_config.TextColumn("O.C.", disabled=True),
-                "FECHA LLEGADA": st.column_config.TextColumn("Fecha Llegada", disabled=True),
-                "LISTA DE PEDIDO": st.column_config.TextColumn(
-                    "📝 Lista de Pedido", disabled=not es_admin, width="medium"
-                ),
-            }
-
-            df_editado = st.data_editor(
+    
+    if proyecto_seleccionado == "Último cargado":
+        datos = proyectos[-1] if proyectos else {}
+    else:
+        datos = next((p for p in proyectos if p["nombre"] == proyecto_seleccionado), {})
+    
+    # KPIs
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Items Solicitados", datos["kpis"]["items_solicitados"])
+    with col2:
+        st.metric("Items Recibidos", datos["kpis"]["items_recibidos"])
+    with col3:
+        st.metric("Items sin O.C.", datos["kpis"]["items_sin_oc"])
+    with col4:
+        st.metric("Avance", f"{datos['kpis']['avance']}%")
+    
+    # GRÁFICA
+    fig = px.pie(
+        values=[datos["kpis"]["items_recibidos"], datos["kpis"]["items_solicitados"] - datos["kpis"]["items_recibidos"]],
+        names=["Recibidos", "Pendientes"],
+        color_discrete_map={"Recibidos": "#2ecc71", "Pendientes": "#e74c3c"},
+        height=300,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    
+    st.write("")
+    
+    # 📋 TABLA GESTIÓN DE PEDIDOS (SOLO O.C. NUMÉRICO, ORDENADO)
+    st.subheader("📋 Gestión de Pedidos (Solo con O.C. NUMÉRICO)")
+    raw_tabla = datos.get("tabla_resumen", [])
+    
+    if raw_tabla:
+        df_tabla = pd.DataFrame(raw_tabla)
+        
+        # EDITOR (SOLO ADMIN)
+        if password == "1234":
+            edited_df = st.data_editor(
                 df_tabla,
-                column_config=column_config,
+                column_config={
+                    "LISTA DE PEDIDO": st.column_config.TextColumn("LISTA DE PEDIDO", disabled=False)
+                },
                 use_container_width=True,
-                hide_index=True,
-                num_rows="fixed",
-                key=f"editor_{proyecto['id']}",
+                hide_index=False
             )
-
-            # Guardar tabla editada
-            if es_admin:
-                if st.button("💾 Guardar Tabla", type="primary"):
-                    st.session_state.proyectos[indice_proyecto]["contenido"][
-                        "tabla_resumen"
-                    ] = df_editado.to_dict(orient="records")
-                    guardar_datos(st.session_state.proyectos)
-                    st.success("Tabla guardada.")
-                    st.rerun()
-
-            # SECCIÓN ADMIN: SUBIR PDFS POR No. S.C.
-            if es_admin:
-                st.write("---")
-                st.subheader("📁 Gestión de PDFs (Admin)")
-
-                scs_unicos = df_tabla["No. S.C."].unique().tolist()
-
-                sc_seleccionado = st.selectbox(
-                    "Selecciona No. S.C. para asignar PDF:",
-                    options=scs_unicos,
-                    key=f"sc_select_{proyecto['id']}",
-                )
-
-                pdf_subido = st.file_uploader(
-                    "Sube un PDF para esta S.C.",
-                    type=["pdf"],
-                    key=f"pdf_upload_{proyecto['id']}",
-                )
-
-                if st.button("📤 Asignar PDF a todas las filas de esta S.C.", type="primary"):
-                    if pdf_subido and sc_seleccionado:
-                        pdf_nombre = f"{sc_seleccionado}_{datetime.datetime.now().timestamp()}.pdf"
-                        pdf_path = os.path.join(PDF_DIR, pdf_nombre)
-
-                        with open(pdf_path, "wb") as f:
-                            f.write(pdf_subido.getbuffer())
-
-                        tabla_actualizada = st.session_state.proyectos[indice_proyecto]["contenido"]["tabla_resumen"]
-                        for row in tabla_actualizada:
-                            if row["No. S.C."] == sc_seleccionado:
-                                row["LISTA DE PEDIDO"] = pdf_nombre
-
-                        st.session_state.proyectos[indice_proyecto]["contenido"]["tabla_resumen"] = tabla_actualizada
-                        guardar_datos(st.session_state.proyectos)
-                        st.success(f"PDF asignado a todas las filas con No. S.C. = {sc_seleccionado}")
-                        st.rerun()
-                    else:
-                        st.warning("Selecciona S.C. y sube un PDF.")
-
+            
+            if st.button("💾 Guardar cambios"):
+                # Actualizar proyecto en memoria
+                if proyecto_seleccionado == "Último cargado":
+                    proyectos[-1]["tabla_resumen"] = edited_df.to_dict('records')
+                else:
+                    for p in proyectos:
+                        if p["nombre"] == proyecto_seleccionado:
+                            p["tabla_resumen"] = edited_df.to_dict('records')
+                            break
+                guardar_datos(proyectos)
+                st.success("Guardado.")
+                st.rerun()
         else:
-            st.warning("❌ No hay items con FECHA DE LLEGADA válida.")
-
-        with st.expander("🔍 Ver Datos Originales (Solicitados)"):
-            st.dataframe(pd.DataFrame(datos["data"]))
+            st.dataframe(df_tabla, use_container_width=True)
+    else:
+        st.warning("❌ No hay items con O.C. NUMÉRICO.")
+    
+    # EXPANDER DATOS ORIGINALES
+    with st.expander("🔍 Ver Datos Originales (Solicitados)"):
+        st.dataframe(pd.DataFrame(datos["data"]))
