@@ -95,7 +95,7 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
     # 3) Items recibidos (con 'RE' en O y sin 'SERVICIO' en F)
     items_recibidos = len(df_tabla)
 
-    # 4) Items sin OC (excluyendo servicios → igual que en tu código de referencia)
+    # 4) Items sin OC (excluyendo servicios) → igual que en tu código de referencia
     df_sin_servicio = df_solicitados[~col_desc.str.contains("SERVICIO", na=False)]
     items_sin_oc = int(df_sin_servicio.iloc[:, 7].isnull().sum())
 
@@ -299,3 +299,26 @@ else:
                 "📋 Lista de Pedido",
                 disabled=not es_admin,   # editable solo para admin
             ),
+            "ESTATUS": st.column_config.TextColumn("Estatus", disabled=True),
+        }
+
+        df_editado = st.data_editor(
+            df_mostrar.drop(columns=["_row_index"]),
+            column_config=column_config,
+            use_container_width=True,
+            hide_index=True,
+            num_rows="fixed",
+            key=f"editor_{proyecto['id']}",
+        )
+
+        if es_admin:
+            if st.button("💾 Guardar cambios en Lista de Pedido", type="primary"):
+                df_tabla["LISTA DE PEDIDO"] = df_editado["LISTA DE PEDIDO"]
+                st.session_state.proyectos[indice_proyecto]["contenido"]["tabla_resumen"] = (
+                    df_tabla.to_dict(orient="records")
+                )
+                guardar_datos(st.session_state.proyectos)
+                st.success("✅ Cambios guardados.")
+                st.rerun()
+    else:
+        st.warning("❌ No hay items válidos.")
