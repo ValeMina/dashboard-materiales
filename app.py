@@ -51,44 +51,45 @@ if "proyectos" not in st.session_state:
 # --- PROCESAMIENTO DEL EXCEL ---
 def procesar_nuevo_excel(df_raw: pd.DataFrame):
     """
-    Tabla basada en filtro de columna O que contenga 'RE'.
+    Tabla basada en FECHA DE LLEGADA válida.
     Columnas usadas por índice:
     - 0 (A): No. S.C.
     - 3 (D): CANT ITEM S.C.
     - 5 (F): DESCRIPCION DE LA PARTIDA
     - 7 (H): No. O.C.
     - 12 (M): FECHA DE LLEGADA
-    - 14 (O): Estado ('RE', etc.) para filtrar.
+    Solo se consideran filas donde la columna M se puede interpretar como fecha.
     """
     # Verificar columnas suficientes
-    if df_raw.shape[1] < 15:
-        return {"error": "El archivo no tiene suficientes columnas (mínimo hasta la O)."}
+    if df_raw.shape[1] < 13:
+        return {"error": "El archivo no tiene suficientes columnas (mínimo hasta la M)."}
 
     # 1) Items solicitados: filas con cantidad en columna D (índice 3)
     df_solicitados = df_raw[df_raw.iloc[:, 3].notna()].copy()
     items_solicitados = int(len(df_solicitados))
 
-    # 2) FILTRO ÚNICO: columna O (índice 14) debe contener "RE" en el texto
-    col_o = df_solicitados.iloc[:, 14].astype(str).str.upper()
-    df_tabla = df_solicitados[col_o.str.contains("RE", na=False)].copy()
+    # 2) Tabla: solo filas donde FECHA DE LLEGADA (M, índice 12) sea una fecha válida
+    col_fecha_raw = df_solicitados.iloc[:, 12].astype(str).str.strip()
+    fechas_parseadas = pd.to_datetime(col_fecha_raw, errors="coerce", dayfirst=True)
+    df_tabla = df_solicitados[fechas_parseadas.notna()].copy()
 
     if df_tabla.empty:
-        return {"error": "No hay filas donde la columna O contenga 'RE'."}
+        return {"error": 'No hay filas con FECHA DE LLEGADA en formato de fecha válido (por ejemplo "15/09/2025").'}
 
-    # 3) Items recibidos (con 'RE' en columna O)
+    # 3) Items recibidos (con fecha válida)
     items_recibidos = len(df_tabla)
 
     # 4) Otros KPIs (sobre solicitados)
     items_sin_oc = int(df_solicitados.iloc[:, 7].isnull().sum())
     avance = (items_recibidos / items_solicitados * 100) if items_solicitados > 0 else 0.0
 
-    # 5) Construir tabla_resumen (mismos nombres de columnas)
+    # 5) Construir tabla_resumen
     tabla_resumen = []
     for _, row in df_tabla.iterrows():
-        sc    = str(row.iloc[0])  if pd.notnull(row.iloc[0])  else ""
-        cant  = str(row.iloc[3])  if pd.notnull(row.iloc[3])  else ""
-        desc  = str(row.iloc[5])  if pd.notnull(row.iloc[5])  else ""
-        oc    = str(row.iloc[7])  if pd.notnull(row.iloc[7])  else ""
+        sc = str(row.iloc[0]) if pd.notnull(row.iloc[0]) else ""
+        cant = str(row.iloc[3]) if pd.notnull(row.iloc[3]) else ""
+        desc = str(row.iloc[5]) if pd.notnull(row.iloc[5]) else ""
+        oc = str(row.iloc[7]) if pd.notnull(row.iloc[7]) else ""
         fecha = str(row.iloc[12]) if pd.notnull(row.iloc[12]) else ""
 
         tabla_resumen.append({
@@ -100,7 +101,6 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
             "LISTA DE PEDIDO": ""
         })
 
-    # Datos originales (solicitados) para un posible uso futuro
     data_preview = df_solicitados.fillna("").head(500).to_dict(orient="records")
 
     return {
@@ -185,6 +185,7 @@ with st.sidebar:
             guardar_datos([])
             st.rerun()
     else:
+        # Puedes dejarlo vacío o mostrar otro mensaje
         pass
 
 # --- CONTENIDO PRINCIPAL ---
@@ -211,7 +212,7 @@ else:
         with c1:
             st.metric("Items Solicitados", kpis["items_requisitados"])
         with c2:
-            st.metric("Items con 'RE' en col. O", kpis["items_recibidos"])
+            st.metric("Items con Fecha (válida)", kpis["items_recibidos"])
         with c3:
             st.metric("Items sin OC", kpis["items_sin_oc"])
         with c4:
@@ -223,7 +224,7 @@ else:
         with col_graf:
             df_graf = pd.DataFrame(
                 {
-                    "Estado": ["Solicitados", "Con 'RE' en O", "Sin OC"],
+                    "Estado": ["Solicitados", "Con Fecha válida", "Sin OC"],
                     "Cantidad": [
                         kpis["items_requisitados"],
                         kpis["items_recibidos"],
@@ -239,7 +240,7 @@ else:
                 text_auto=True,
                 color_discrete_map={
                     "Solicitados": "#3498db",
-                    "Con 'RE' en O": "#2ecc71",
+                    "Con Fecha válida": "#2ecc71",
                     "Sin OC": "#e74c3c",
                 },
                 height=300,
@@ -248,14 +249,14 @@ else:
 
         st.write("---")
 
-        # NUEVA TABLA (mismos nombres de columnas, ya filtrada por 'RE' en O)
-        st.subheader("📋 Gestión de Pedidos (filtrados por 'RE' en columna O)")
+        # TABLA DE GESTIÓN DE PEDIDOS
+        st.subheader("📋 Gestión de Pedidos (Solo con FECHA DE LLEGADA válida)")
         raw_tabla = datos.get("tabla_resumen", [])
 
         if raw_tabla:
             df_tabla = pd.DataFrame(raw_tabla)
 
-            st.success(f"✅ Mostrando {len(df_tabla)} items con 'RE' en columna O.")
+            st.success(f"✅ Mostrando {len(df_tabla)} items con FECHA DE LLEGADA válida.")
 
             column_config = {
                 "No. S.C.": st.column_config.TextColumn("No. S.C.", disabled=True),
@@ -286,5 +287,48 @@ else:
                     guardar_datos(st.session_state.proyectos)
                     st.success("Tabla guardada.")
                     st.rerun()
+
+            # SECCIÓN ADMIN: SUBIR PDFS POR No. S.C.
+            if es_admin:
+                st.write("---")
+                st.subheader("📁 Gestión de PDFs (Admin)")
+
+                scs_unicos = df_tabla["No. S.C."].unique().tolist()
+
+                sc_seleccionado = st.selectbox(
+                    "Selecciona No. S.C. para asignar PDF:",
+                    options=scs_unicos,
+                    key=f"sc_select_{proyecto['id']}",
+                )
+
+                pdf_subido = st.file_uploader(
+                    "Sube un PDF para esta S.C.",
+                    type=["pdf"],
+                    key=f"pdf_upload_{proyecto['id']}",
+                )
+
+                if st.button("📤 Asignar PDF a todas las filas de esta S.C.", type="primary"):
+                    if pdf_subido and sc_seleccionado:
+                        pdf_nombre = f"{sc_seleccionado}_{datetime.datetime.now().timestamp()}.pdf"
+                        pdf_path = os.path.join(PDF_DIR, pdf_nombre)
+
+                        with open(pdf_path, "wb") as f:
+                            f.write(pdf_subido.getbuffer())
+
+                        tabla_actualizada = st.session_state.proyectos[indice_proyecto]["contenido"]["tabla_resumen"]
+                        for row in tabla_actualizada:
+                            if row["No. S.C."] == sc_seleccionado:
+                                row["LISTA DE PEDIDO"] = pdf_nombre
+
+                        st.session_state.proyectos[indice_proyecto]["contenido"]["tabla_resumen"] = tabla_actualizada
+                        guardar_datos(st.session_state.proyectos)
+                        st.success(f"PDF asignado a todas las filas con No. S.C. = {sc_seleccionado}")
+                        st.rerun()
+                    else:
+                        st.warning("Selecciona S.C. y sube un PDF.")
+
         else:
-            st.warning("❌ No hay items con 'RE' en columna O.")
+            st.warning("❌ No hay items con FECHA DE LLEGADA válida.")
+
+        with st.expander("🔍 Ver Datos Originales (Solicitados)"):
+            st.dataframe(pd.DataFrame(datos["data"]))
