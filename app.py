@@ -34,18 +34,18 @@ st.write("---")
 
 # --- FUNCIONES PARA PDFs ---
 def guardar_pdf(nombre_pdf, contenido_pdf):
+    """Guarda PDF en disco y retorna nombre del archivo"""
     ruta_pdf = os.path.join(PDF_DIR, nombre_pdf)
     with open(ruta_pdf, "wb") as f:
         f.write(contenido_pdf)
     return nombre_pdf
 
 def get_download_link(nombre_pdf):
-    if nombre_pdf and os.path.exists(os.path.join(PDF_DIR, nombre_pdf)):
-        with open(os.path.join(PDF_DIR, nombre_pdf), "rb") as f:
-            b64 = base64.b64encode(f.read()).decode()
-        # enlace tipo data:; no todos los navegadores lo soportan perfecto, pero evita exponer rutas.[web:16]
-        return f"[📥 Descargar](data:application/pdf;base64,{b64})"
-    return "❌ Sin PDF"
+    """Genera enlace de descarga para PDF"""
+    if os.path.exists(os.path.join(PDF_DIR, nombre_pdf)):
+        b64 = base64.b64encode(open(os.path.join(PDF_DIR, nombre_pdf), 'rb').read()).decode()
+        return f'[📥 Descargar](data:application/pdf;base64,{b64})'
+    return "❌ No disponible"
 
 # --- PERSISTENCIA ---
 def cargar_datos():
@@ -64,40 +64,49 @@ def guardar_datos(lista_proyectos):
 if "proyectos" not in st.session_state:
     st.session_state.proyectos = cargar_datos()
 
-# --- PROCESAR EXCEL ---
+# --- PROCESAMIENTO DEL EXCEL ---
 def procesar_nuevo_excel(df_raw: pd.DataFrame):
     """
-    Filtra:
-    - Columna O contiene 'RE'
-    - Columna F (DESCRIPCION) NO contiene 'SERVICIO'
-    Devuelve tabla con:
-    A: No. S.C., D: CANT ITEM, F: DESCRIPCION, H: No. O.C.,
-    M: FECHA LLEGADA, LISTA DE PEDIDO (vacía), O: ESTATUS.
+    Tabla basada en filtro de columna O que contenga 'RE' Y NO contenga 'SERVICIO' en columna F.
+    Columnas usadas por índice:
+    - 0 (A): No. S.C.
+    - 3 (D): CANT ITEM S.C.
+    - 5 (F): DESCRIPCION DE LA PARTIDA
+    - 7 (H): No. O.C.
+    - 12 (M): FECHA DE LLEGADA
+    - 14 (O): ESTATUS
     """
+    # Verificar columnas suficientes
     if df_raw.shape[1] < 15:
         return {"error": "El archivo no tiene suficientes columnas (mínimo hasta la O)."}
 
-    df_solicitados = df_raw[df_raw.iloc[:, 3].notna()].copy()  # D no nulo
+    # 1) Items solicitados: filas con cantidad en columna D (índice 3)
+    df_solicitados = df_raw[df_raw.iloc[:, 3].notna()].copy()
     items_solicitados = int(len(df_solicitados))
 
-    col_o = df_solicitados.iloc[:, 14].astype(str).str.upper()   # O
-    col_desc = df_solicitados.iloc[:, 5].astype(str).str.upper() # F
-
+    # 2) FILTRO DOBLE: columna O debe contener "RE" Y columna F NO debe contener "SERVICIO"
+    col_o = df_solicitados.iloc[:, 14].astype(str).str.upper()      # COLUMNA O (ESTATUS)
+    col_desc = df_solicitados.iloc[:, 5].astype(str).str.upper()    # COLUMNA F (DESCRIPCION)
+    
+    # Filtrar: RE en O Y NO SERVICIO en F
     mask_re = col_o.str.contains("RE", na=False)
     mask_no_servicio = ~col_desc.str.contains("SERVICIO", na=False)
-
     df_tabla = df_solicitados[mask_re & mask_no_servicio].copy()
-    if df_tabla.empty:
-        return {"error": "No hay filas con 'RE' en O y sin 'SERVICIO' en F."}
 
+    if df_tabla.empty:
+        return {"error": "No hay filas donde la columna O contenga 'RE' y columna F NO contenga 'SERVICIO'."}
+
+    # 3) Items recibidos (con 'RE' en O y sin 'SERVICIO' en F)
     items_recibidos = len(df_tabla)
 
+    # 4) Items sin OC (excluyendo servicios)
     df_sin_servicio = df_solicitados[~col_desc.str.contains("SERVICIO", na=False)]
     items_sin_oc = int(df_sin_servicio.iloc[:, 7].isnull().sum())
     avance = (items_recibidos / items_solicitados * 100) if items_solicitados > 0 else 0.0
 
+    # 5) Construir tabla_resumen SOLO con materiales (sin servicios) + LISTA DE PEDIDO vacía
     tabla_resumen = []
-    for idx, row in df_tabla.iterrows():
+    for _, row in df_tabla.iterrows():
         sc = str(row.iloc[0]) if pd.notnull(row.iloc[0]) else ""
         cant = str(row.iloc[3]) if pd.notnull(row.iloc[3]) else ""
         desc = str(row.iloc[5]) if pd.notnull(row.iloc[5]) else ""
@@ -111,11 +120,11 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
             "DESCRIPCION": desc,
             "No. O.C.": oc,
             "FECHA LLEGADA": fecha,
-            "LISTA DE PEDIDO": "",   # aquí se guarda el nombre del PDF
-            "ESTATUS": estatus,
-            "_row_index": int(idx),
+            "LISTA DE PEDIDO": "",
+            "ESTATUS": estatus
         })
 
+    # Datos originales para regeneración futura
     data_preview = df_solicitados.fillna("").head(500).to_dict(orient="records")
 
     return {
@@ -130,22 +139,27 @@ def procesar_nuevo_excel(df_raw: pd.DataFrame):
         "fecha_carga": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
     }
 
-# --- REGENERAR EXISTENTES ---
+# --- FUNCIÓN PARA REGENERAR TABLAS EXISTENTES ---
 def regenerar_tablas_existentes():
+    """Regenera tabla_resumen excluyendo SERVICIOS de columna F + agrega LISTA DE PEDIDO"""
     if st.session_state.proyectos:
-        with st.spinner("🔄 Regenerando tablas..."):
+        with st.spinner("🔄 Regenerando tablas (sin SERVICIOS + LISTA DE PEDIDO)..."):
             for proyecto in st.session_state.proyectos:
                 if "data" in proyecto["contenido"]:
                     df_raw = pd.DataFrame(proyecto["contenido"]["data"])
                     resultado = procesar_nuevo_excel(df_raw)
+                    
                     if "error" not in resultado:
                         proyecto["contenido"] = resultado
+            
             guardar_datos(st.session_state.proyectos)
-        st.success("✅ Tablas regeneradas.")
-        st.rerun()
+            st.success("✅ Tablas regeneradas (con LISTA DE PEDIDO).")
+            st.rerun()
 
-# --- SIDEBAR / ADMIN ---
+# --- UI PRINCIPAL ---
 es_admin = False
+
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ Panel de Administración")
     password = st.text_input("Clave de Acceso", type="password")
@@ -155,13 +169,18 @@ with st.sidebar:
         st.success("🔓 Modo Editor Activo")
         st.markdown("---")
 
-        if st.button("🔄 Regenerar Tablas"):
+        # BOTÓN REGENERAR
+        if st.button("🔄 Regenerar Tablas (con LISTA DE PEDIDO)"):
             regenerar_tablas_existentes()
 
         st.markdown("---")
+
+        # SUBIR NUEVOS PROYECTOS
         st.subheader("📤 Subir Nuevos Proyectos")
         archivos_subidos = st.file_uploader(
-            "Archivos Excel/CSV", type=["xlsx", "xls", "csv"], accept_multiple_files=True
+            "Archivos Excel/CSV",
+            type=["xlsx", "xls", "csv"],
+            accept_multiple_files=True,
         )
 
         if st.button("Procesar y Guardar"):
@@ -186,6 +205,7 @@ with st.sidebar:
                             nombre_proyecto = archivo_subido.name
 
                         resultado = procesar_nuevo_excel(df)
+
                         if "error" in resultado:
                             st.error(f"{archivo_subido.name}: {resultado['error']}")
                         else:
@@ -217,124 +237,107 @@ else:
     seleccion = st.selectbox("📂 Selecciona reporte:", opciones)
 
     indice_proyecto = next(
-        (i for i, p in enumerate(st.session_state.proyectos) if p["nombre"] == seleccion), None
+        (i for i, p in enumerate(st.session_state.proyectos) if p["nombre"] == seleccion),
+        None,
     )
     proyecto = st.session_state.proyectos[indice_proyecto]
 
-    datos = proyecto["contenido"]
-    kpis = datos["kpis"]
+    if proyecto:
+        datos = proyecto["contenido"]
+        kpis = datos["kpis"]
 
-    st.markdown(f"### Reporte: {proyecto['nombre']} (Cargado: {datos['fecha_carga']})")
+        st.markdown(f"### Reporte: {proyecto['nombre']} (Cargado: {datos['fecha_carga']})")
 
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.metric("Items Solicitados", kpis["items_requisitados"])
-    with c2:
-        st.metric("Items con 'RE' (sin SERVICIOS)", kpis["items_recibidos"])
-    with c3:
-        st.metric("Items sin OC (sin SERVICIOS)", kpis["items_sin_oc"])
-    with c4:
-        st.metric("Avance", f"{kpis['avance']:.1f}%")
-    st.write("---")
+        # KPIs (SIN SERVICIOS)
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("Items Solicitados", kpis["items_requisitados"])
+        with c2:
+            st.metric("Items con 'RE' (sin SERVICIOS)", kpis["items_recibidos"])
+        with c3:
+            st.metric("Items sin OC (sin SERVICIOS)", kpis["items_sin_oc"])
+        with c4:
+            st.metric("Avance", f"{kpis['avance']:.1f}%")
+        st.write("---")
 
-    col_graf, _ = st.columns([1, 0.1])
-    with col_graf:
-        df_graf = pd.DataFrame(
-            {
+        # GRÁFICA (SIN SERVICIOS)
+        col_graf, _ = st.columns([1, 0.1])
+        with col_graf:
+            df_graf = pd.DataFrame({
                 "Estado": ["Solicitados", "Con 'RE' (sin SERVICIOS)", "Sin OC (sin SERVICIOS)"],
-                "Cantidad": [
-                    kpis["items_requisitados"],
-                    kpis["items_recibidos"],
-                    kpis["items_sin_oc"],
-                ],
+                "Cantidad": [kpis["items_requisitados"], kpis["items_recibidos"], kpis["items_sin_oc"]]
+            })
+            fig = px.bar(df_graf, x="Estado", y="Cantidad", color="Estado", text_auto=True,
+                        color_discrete_map={
+                            "Solicitados": "#3498db",
+                            "Con 'RE' (sin SERVICIOS)": "#2ecc71",
+                            "Sin OC (sin SERVICIOS)": "#e74c3c"
+                        }, height=300)
+            st.plotly_chart(fig, use_container_width=True)
+
+        st.write("---")
+
+        # TABLA CON LISTA DE PEDIDO (EDITABLE SOLO PARA ADMIN)
+        st.subheader("📋 Items con 'RE' en O (SERVICIOS excluidos)")
+        raw_tabla = datos.get("tabla_resumen", [])
+
+        if raw_tabla:
+            df_tabla = pd.DataFrame(raw_tabla)
+            st.success(f"✅ {len(df_tabla)} items con 'RE' en O (sin SERVICIOS en F).")
+
+            column_config = {
+                "No. S.C.": st.column_config.TextColumn("No. S.C.", disabled=True),
+                "CANT ITEM": st.column_config.TextColumn("Cant.", disabled=True),
+                "DESCRIPCION": st.column_config.TextColumn("Descripción", disabled=True),
+                "No. O.C.": st.column_config.TextColumn("O.C.", disabled=True),
+                "FECHA LLEGADA": st.column_config.TextColumn("Fecha Llegada", disabled=True),
+                "LISTA DE PEDIDO": st.column_config.TextColumn(
+                    "📋 Lista de Pedido", 
+                    disabled=not es_admin,
+                    help="Admin: Escribe el nombre del PDF (ej: SC123.pdf)"
+                ),
+                "ESTATUS": st.column_config.TextColumn("Estatus", disabled=True),
             }
-        )
-        fig = px.bar(
-            df_graf,
-            x="Estado",
-            y="Cantidad",
-            color="Estado",
-            text_auto=True,
-            color_discrete_map={
-                "Solicitados": "#3498db",
-                "Con 'RE' (sin SERVICIOS)": "#2ecc71",
-                "Sin OC (sin SERVICIOS)": "#e74c3c",
-            },
-            height=300,
-        )
-        st.plotly_chart(fig, use_container_width=True)
 
-    st.write("---")
-
-    st.subheader("📋 Items con 'RE' en O (SERVICIOS excluidos)")
-    raw_tabla = datos.get("tabla_resumen", [])
-
-    if raw_tabla:
-        df_tabla = pd.DataFrame(raw_tabla)
-
-        # Copia para mostrar con enlaces
-        df_mostrar = df_tabla.copy()
-        for idx, row in df_mostrar.iterrows():
-            nombre_pdf = row.get("LISTA DE PEDIDO", "")
-            df_mostrar.at[idx, "LISTA DE PEDIDO"] = get_download_link(nombre_pdf)
-
-        column_config = {
-            "No. S.C.": st.column_config.TextColumn("No. S.C.", disabled=True),
-            "CANT ITEM": st.column_config.TextColumn("Cant.", disabled=True),
-            "DESCRIPCION": st.column_config.TextColumn(
-                "Descripción", width="medium", disabled=True
-            ),
-            "No. O.C.": st.column_config.TextColumn("O.C.", disabled=True),
-            "FECHA LLEGADA": st.column_config.TextColumn("Fecha Llegada", disabled=True),
-            "LISTA DE PEDIDO": st.column_config.TextColumn("📋 Lista de Pedido", disabled=True),
-            "ESTATUS": st.column_config.TextColumn("Estatus", disabled=True),
-        }
-
-        st.dataframe(
-            df_mostrar.drop(columns=["_row_index"]),
-            column_config=column_config,
-            use_container_width=True,
-            hide_index=True,
-        )
-
-        # --- PANEL ADMIN PARA ASIGNAR PDF A FILA ---
-        if es_admin:
-            st.markdown("---")
-            st.subheader("👨‍💼 ADMIN: Asignar PDF a una fila")
-
-            fila_seleccionada = st.selectbox(
-                "📍 Selecciona la fila donde guardar el PDF:",
-                options=df_tabla.index.tolist(),
-                format_func=lambda x: f"Fila {x+1}: {df_tabla.iloc[x]['No. S.C.']} - {df_tabla.iloc[x]['DESCRIPCION'][:50]}...",
+            df_editado = st.data_editor(
+                df_tabla,
+                column_config=column_config,
+                use_container_width=True,
+                hide_index=True,
+                num_rows="fixed",
+                key=f"editor_{proyecto['id']}",
             )
 
-            col1, col2 = st.columns(2)
-            with col1:
-                pdf_subido = st.file_uploader(
-                    "📎 Subir PDF", type="pdf", key=f"pdf_uploader_{fila_seleccionada}"
-                )
-            with col2:
-                nombre_pdf = st.text_input(
-                    "📝 Nombre del PDF:",
-                    value=f"SC_{df_tabla.iloc[fila_seleccionada]['No. S.C.']}_{proyecto['nombre']}.pdf",
-                    key=f"pdf_name_{fila_seleccionada}",
-                )
+            # SUBIR PDF PARA LISTA DE PEDIDO (SOLO ADMIN)
+            if es_admin:
+                st.markdown("---")
+                pdf_subido = st.file_uploader("📎 Subir PDF para Lista de Pedido", 
+                                            type="pdf", 
+                                            key=f"pdf_{proyecto['id']}")
+                
+                if pdf_subido is not None:
+                    nombre_pdf = st.text_input("Nombre del PDF:", 
+                                             value=f"{proyecto['nombre']}_{pdf_subido.name}",
+                                             key=f"nombre_pdf_{proyecto['id']}")
+                    
+                    if st.button("💾 Guardar PDF", key=f"guardar_pdf_{proyecto['id']}"):
+                        nombre_archivo = guardar_pdf(nombre_pdf, pdf_subido.getvalue())
+                        
+                        # Actualizar la primera fila con el PDF (o donde admin lo especifique)
+                        if len(df_editado) > 0:
+                            df_editado.iloc[0, df_editado.columns.get_loc("LISTA DE PEDIDO")] = nombre_archivo
+                        
+                        # Guardar tabla editada
+                        st.session_state.proyectos[indice_proyecto]["contenido"]["tabla_resumen"] = df_editado.to_dict(orient="records")
+                        guardar_datos(st.session_state.proyectos)
+                        st.success(f"✅ PDF '{nombre_archivo}' guardado y asignado.")
+                        st.rerun()
 
-            if st.button(
-                f"💾 Guardar PDF en Fila {fila_seleccionada + 1}",
-                type="primary",
-                key=f"btn_guardar_pdf_{fila_seleccionada}",
-            ):
-                if pdf_subido:
-                    nombre_archivo_guardado = guardar_pdf(nombre_pdf, pdf_subido.getvalue())
-                    df_tabla.at[fila_seleccionada, "LISTA DE PEDIDO"] = nombre_archivo_guardado
-                    st.session_state.proyectos[indice_proyecto]["contenido"]["tabla_resumen"] = (
-                        df_tabla.to_dict(orient="records")
-                    )
+                # BOTÓN GUARDAR TABLA
+                if st.button("💾 Guardar Tabla Editada", type="primary"):
+                    st.session_state.proyectos[indice_proyecto]["contenido"]["tabla_resumen"] = df_editado.to_dict(orient="records")
                     guardar_datos(st.session_state.proyectos)
-                    st.success(f"✅ PDF guardado en Fila {fila_seleccionada + 1}")
+                    st.success("✅ Tabla guardada.")
                     st.rerun()
-                else:
-                    st.error("❌ Selecciona un PDF primero")
-    else:
-        st.warning("❌ No hay items válidos.")
+        else:
+            st.warning("❌ No hay items con 'RE' en O que no sean SERVICIOS.")
